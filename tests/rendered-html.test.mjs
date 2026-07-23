@@ -8,11 +8,11 @@ async function render() {
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("https://tetrix.example/", {
+    new Request("https://tetstar.example/", {
       headers: {
         accept: "text/html",
-        host: "tetrix.example",
-        "x-forwarded-host": "tetrix.example",
+        host: "tetstar.example",
+        "x-forwarded-host": "tetstar.example",
         "x-forwarded-proto": "https",
       },
     }),
@@ -34,7 +34,7 @@ test("server-renders the complete game selector", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /TETRIX/);
+  assert.match(html, /TETSTAR/);
   assert.match(html, /40 LINES/);
   assert.match(html, /BLITZ/);
   assert.match(html, /ZEN/);
@@ -51,7 +51,7 @@ test("ships without starter-only assets", async () => {
     readFile(new URL("../app/GameClient.tsx", import.meta.url), "utf8"),
   ]);
 
-  assert.match(packageJson, /"name": "tetrix-rule-lab"/);
+  assert.match(packageJson, /"name": "tetstar-rule-lab"/);
   assert.match(packageJson, /"peerjs":/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.match(gameClient, /playersRef\.current\.length >= 8/);
@@ -75,8 +75,14 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /rules: rulesRef\.current/);
   assert.match(gameClient, /온라인 대전은 방장의 설정을 모든 참가자에게 동일하게 적용합니다/);
   assert.match(gameClient, /T-SPIN DOUBLE!/);
+  assert.match(gameClient, /tetstar-identity-v1/);
+  assert.match(gameClient, /WELCOME TO TETSTAR/);
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
   );
   await access(new URL("../public/og.png", import.meta.url));
+  await access(
+    new URL("../app/fonts/PretendardVariable.woff2", import.meta.url),
+  );
+  await access(new URL("../public/LICENSE-PRETENDARD.txt", import.meta.url));
 });

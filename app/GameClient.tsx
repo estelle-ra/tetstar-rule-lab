@@ -52,6 +52,11 @@ type Rules = {
   ghost: boolean;
 };
 
+type LocalIdentity = {
+  username: string;
+  guest: true;
+};
+
 type GameSnapshot = {
   cells: string[];
   lines: number;
@@ -938,11 +943,19 @@ function generateRoomCode() {
 }
 
 function roomPeerId(code: string) {
-  return `tetrix-${code.toLowerCase()}`;
+  return `tetstar-${code.toLowerCase()}`;
 }
 
 function cleanPlayerName(value: string) {
   return value.trim().replace(/\s+/g, " ").slice(0, 14) || "PLAYER";
+}
+
+function normalizeUsername(value: string) {
+  return value
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^\p{L}\p{N}_-]/gu, "")
+    .slice(0, 16);
 }
 
 function RemoteBoard({
@@ -976,12 +989,18 @@ function RemoteBoard({
   );
 }
 
-function OnlineParty({ rules }: { rules: Rules }) {
+function OnlineParty({
+  rules,
+  defaultPlayerName,
+}: {
+  rules: Rules;
+  defaultPlayerName: string;
+}) {
   const [phase, setPhaseState] = useState<
     "entry" | "connecting" | "lobby" | "playing" | "ended"
   >("entry");
   const [role, setRole] = useState<"host" | "guest" | null>(null);
-  const [playerName, setPlayerName] = useState("PLAYER");
+  const [playerName, setPlayerName] = useState(defaultPlayerName);
   const [joinCode, setJoinCode] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [localId, setLocalId] = useState("");
@@ -1810,14 +1829,86 @@ function DemoStack() {
   );
 }
 
+function IdentityGate({
+  currentName,
+  canClose,
+  onContinue,
+  onClose,
+}: {
+  currentName?: string;
+  canClose: boolean;
+  onContinue: (username: string) => void;
+  onClose: () => void;
+}) {
+  const [username, setUsername] = useState(currentName ?? "");
+  const normalized = normalizeUsername(username);
+
+  const submit = () => {
+    if (normalized.length < 2) return;
+    onContinue(normalized);
+  };
+
+  return (
+    <div className="identity-gate" role="dialog" aria-modal="true">
+      <div className="identity-card">
+        {canClose && (
+          <button
+            className="identity-close"
+            onClick={onClose}
+            aria-label="닫기"
+          >
+            ×
+          </button>
+        )}
+        <span className="eyebrow">PLAYER IDENTITY</span>
+        <h2>WELCOME TO TETSTAR</h2>
+        <p>
+          먼저 게임에서 사용할 username을 정해주세요. 계정 연결 전에는 이
+          기기에 게스트로 저장됩니다.
+        </p>
+        <label>
+          <span>USERNAME</span>
+          <input
+            autoFocus
+            autoComplete="username"
+            maxLength={16}
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submit();
+            }}
+            placeholder="2–16자 / 한글·영문·숫자"
+          />
+        </label>
+        <button
+          className="identity-submit"
+          disabled={normalized.length < 2}
+          onClick={submit}
+        >
+          {currentName ? "SAVE USERNAME →" : "GUEST PLAY →"}
+        </button>
+        <p className="identity-note">
+          다음 단계에서 이메일·비밀번호 계정을 연결하면 기록과 프로필을 여러
+          기기에서 이어갈 수 있습니다.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function GameClient() {
   const [screen, setScreen] = useState<Screen>("home");
   const [run, setRun] = useState(0);
   const [rules, setRulesState] = useState<Rules>(DEFAULT_RULES);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [identity, setIdentity] = useState<LocalIdentity | null>(null);
+  const [identityReady, setIdentityReady] = useState(false);
+  const [identityOpen, setIdentityOpen] = useState(false);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("tetrix-rules-v2");
+    const saved =
+      window.localStorage.getItem("tetstar-rules-v3") ??
+      window.localStorage.getItem("tetrix-rules-v2");
     if (!saved) return;
     const timer = window.setTimeout(() => {
       try {
@@ -1829,9 +1920,34 @@ export default function GameClient() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const saved = window.localStorage.getItem("tetstar-identity-v1");
+        if (saved) {
+          const parsed = JSON.parse(saved) as LocalIdentity;
+          const username = normalizeUsername(parsed.username);
+          if (username.length >= 2) setIdentity({ username, guest: true });
+        }
+      } catch {
+        window.localStorage.removeItem("tetstar-identity-v1");
+      } finally {
+        setIdentityReady(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const setRules = (next: Rules) => {
     setRulesState(next);
-    window.localStorage.setItem("tetrix-rules-v2", JSON.stringify(next));
+    window.localStorage.setItem("tetstar-rules-v3", JSON.stringify(next));
+  };
+
+  const saveIdentity = (username: string) => {
+    const next: LocalIdentity = { username, guest: true };
+    setIdentity(next);
+    setIdentityOpen(false);
+    window.localStorage.setItem("tetstar-identity-v1", JSON.stringify(next));
   };
 
   const goHome = () => {
@@ -1885,7 +2001,7 @@ export default function GameClient() {
             <i />
           </span>
           <span>
-            <strong>TETRIX</strong>
+            <strong>TETSTAR</strong>
             <small>RULE LAB</small>
           </span>
         </button>
@@ -1901,9 +2017,18 @@ export default function GameClient() {
           </button>
           <span className="version">ALPHA 0.1</span>
         </nav>
-        <div className="server-status">
-          <i />
-          P2P READY
+        <div className="topbar-actions">
+          <button
+            className="profile-button"
+            onClick={() => setIdentityOpen(true)}
+          >
+            <small>{identity ? "GUEST PROFILE" : "PLAYER ID"}</small>
+            {identity?.username ?? "SET USERNAME"}
+          </button>
+          <div className="server-status">
+            <i />
+            P2P READY
+          </div>
         </div>
       </header>
 
@@ -1987,9 +2112,9 @@ export default function GameClient() {
               onClick={() => setRulesOpen(true)}
               aria-label="룰 설정 열기"
             >
-              <span>ACTIVE RULESET</span>
+              <span>⚙ RULE SETTINGS</span>
               <strong>
-                ⚙ {rules.gravity}MS / {rules.attack.toFixed(1)}× ATTACK
+                {rules.gravity}MS / {rules.attack.toFixed(1)}× ATTACK
               </strong>
             </button>
             {screen === "versus" ? (
@@ -2002,7 +2127,11 @@ export default function GameClient() {
           </div>
 
           {screen === "versus" ? (
-            <OnlineParty rules={rules} key={run} />
+            <OnlineParty
+              rules={rules}
+              defaultPlayerName={identity?.username ?? "PLAYER"}
+              key={run}
+            />
           ) : (
             <div className="solo-wrap" key={run}>
               <GameBoard
@@ -2064,6 +2193,15 @@ export default function GameClient() {
           setRules={setRules}
           onClose={() => setRulesOpen(false)}
           multiplayer={screen === "versus"}
+        />
+      )}
+
+      {(!identityReady || !identity || identityOpen) && (
+        <IdentityGate
+          currentName={identity?.username}
+          canClose={Boolean(identity)}
+          onContinue={saveIdentity}
+          onClose={() => setIdentityOpen(false)}
         />
       )}
 

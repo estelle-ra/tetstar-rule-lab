@@ -1,4 +1,4 @@
-# TETRIX Rule Lab
+# TETSTAR Rule Lab
 
 브라우저에서 바로 플레이하는 오리지널 블록 스태커 프로토타입입니다.
 
@@ -34,8 +34,8 @@ GitHub Pages용 정적 빌드는 다음과 같이 확인할 수 있습니다.
 
 ```bash
 GITHUB_PAGES=true \
-GITHUB_REPOSITORY=estelle-ra/tetrix-rule-lab \
-NEXT_PUBLIC_SITE_URL=https://estelle-ra.github.io/tetrix-rule-lab/ \
+GITHUB_REPOSITORY=estelle-ra/tetstar-rule-lab \
+NEXT_PUBLIC_SITE_URL=https://estelle-ra.github.io/tetstar-rule-lab/ \
 npm run build:pages
 ```
 
