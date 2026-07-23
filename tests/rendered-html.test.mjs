@@ -101,6 +101,12 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /playersRef\.current\.length >= 8/);
   assert.match(gameClient, /reason: "ROOM_FULL"/);
   assert.match(gameClient, /peer\.connect\(roomPeerId\(code\)/);
+  assert.match(gameClient, /searchParams\.set\("room", roomCode\)/);
+  assert.match(gameClient, /COPY INVITE LINK/);
+  assert.match(gameClient, /type: "chat-submit"/);
+  assert.match(gameClient, /PARTY CHAT/);
+  assert.match(gameClient, /screen === "versus" && !multiplayerPlaying/);
+  assert.match(gameClient, /nextScreen !== "versus"/);
   assert.match(gameClient, /aria-label="모바일 게임 조작"/);
   assert.match(gameClient, /initialDelay = 105/);
   assert.match(gameClient, /repeatRate = 38/);

@@ -324,7 +324,7 @@ export default function AuthGate({
               {view === "login" &&
                 "username과 비밀번호로 로그인합니다."}
               {view === "signup" &&
-                "username을 먼저 정하고 이메일과 비밀번호를 연결합니다."}
+                "username을 먼저 정하고 이메일과 비밀번호를 연결합니다. 이메일 확인은 최초 1회만 필요합니다."}
               {view === "forgot" &&
                 "username에 등록된 이메일로 재설정 링크를 보냅니다."}
               {view === "guest" &&

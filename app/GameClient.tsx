@@ -70,6 +70,14 @@ type RoomPlayer = {
   snapshot?: GameSnapshot;
 };
 
+type ChatMessage = {
+  id: string;
+  playerId: string;
+  playerName: string;
+  text: string;
+  createdAt: number;
+};
+
 type RoomPacket =
   | {
       type: "welcome";
@@ -77,11 +85,14 @@ type RoomPacket =
       players: RoomPlayer[];
       started: boolean;
       rules: Rules;
+      messages: ChatMessage[];
     }
   | { type: "roster"; players: RoomPlayer[]; started: boolean; rules: Rules }
   | { type: "start"; matchId: number; players: RoomPlayer[]; rules: Rules }
   | { type: "attack"; amount: number }
   | { type: "garbage"; id: number; amount: number }
+  | { type: "chat-submit"; text: string }
+  | { type: "chat"; message: ChatMessage }
   | { type: "snapshot"; playerId?: string; snapshot: GameSnapshot }
   | { type: "finish"; status: "lost" }
   | {
@@ -626,6 +637,14 @@ function GameBoard({
       return null;
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.matches(
+          "input, textarea, select, button, [contenteditable='true']",
+        )
+      ) {
+        return;
+      }
       if (status === "lost" || status === "won") return;
       if (event.code === "Escape") {
         if (event.repeat) return;
@@ -947,6 +966,88 @@ function cleanPlayerName(value: string) {
   return value.trim().replace(/\s+/g, " ").slice(0, 16) || "PLAYER";
 }
 
+function cleanChatText(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 180);
+}
+
+async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = value;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    return copied;
+  }
+}
+
+function PartyChat({
+  messages,
+  value,
+  onChange,
+  onSend,
+}: {
+  messages: ChatMessage[];
+  value: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+}) {
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "nearest" });
+  }, [messages]);
+
+  return (
+    <section className="party-chat" aria-label="멀티플레이 채팅">
+      <div className="party-chat-head">
+        <strong>PARTY CHAT</strong>
+        <span>{messages.length ? `${messages.length} MESSAGES` : "CONNECTED"}</span>
+      </div>
+      <div className="party-chat-log" aria-live="polite">
+        {messages.length ? (
+          messages.map((message) => (
+            <p key={message.id}>
+              <span>{message.playerName}</span>
+              {message.text}
+            </p>
+          ))
+        ) : (
+          <p className="party-chat-empty">
+            방에 참가한 팀원들과 메시지를 주고받을 수 있습니다.
+          </p>
+        )}
+        <div ref={endRef} />
+      </div>
+      <form
+        className="party-chat-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSend();
+        }}
+      >
+        <input
+          aria-label="채팅 메시지"
+          maxLength={180}
+          placeholder="메시지 입력"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button type="submit" disabled={!cleanChatText(value)}>
+          SEND
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function RemoteBoard({
   player,
   isSelf,
@@ -981,16 +1082,22 @@ function RemoteBoard({
 function OnlineParty({
   rules,
   defaultPlayerName,
+  initialRoomCode,
+  canAutoJoin,
+  onPlayingChange,
 }: {
   rules: Rules;
   defaultPlayerName: string;
+  initialRoomCode: string;
+  canAutoJoin: boolean;
+  onPlayingChange: (playing: boolean) => void;
 }) {
   const [phase, setPhaseState] = useState<
     "entry" | "connecting" | "lobby" | "playing" | "ended"
   >("entry");
   const [role, setRole] = useState<"host" | "guest" | null>(null);
   const [playerName, setPlayerName] = useState(defaultPlayerName);
-  const [joinCode, setJoinCode] = useState("");
+  const [joinCode, setJoinCode] = useState(initialRoomCode);
   const [roomCode, setRoomCode] = useState("");
   const [localId, setLocalId] = useState("");
   const [players, setPlayers] = useState<RoomPlayer[]>([]);
@@ -999,6 +1106,9 @@ function OnlineParty({
   const [matchId, setMatchId] = useState(0);
   const [matchRules, setMatchRules] = useState(rules);
   const [garbageSignal, setGarbageSignal] = useState({ id: 0, amount: 0 });
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatText, setChatText] = useState("");
+  const [inviteStatus, setInviteStatus] = useState("COPY INVITE LINK");
   const peerRef = useRef<PeerInstance | null>(null);
   const hostConnectionRef = useRef<DataConnection | null>(null);
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
@@ -1007,7 +1117,17 @@ function OnlineParty({
   const roleRef = useRef<"host" | "guest" | null>(null);
   const phaseRef = useRef(phase);
   const rulesRef = useRef(rules);
+  const chatMessagesRef = useRef<ChatMessage[]>([]);
+  const autoJoinAttemptedRef = useRef(false);
   const targetCursor = useRef(0);
+
+  useEffect(() => {
+    if (phaseRef.current === "entry") setPlayerName(defaultPlayerName);
+  }, [defaultPlayerName]);
+
+  useEffect(() => {
+    onPlayingChange(phase === "playing");
+  }, [onPlayingChange, phase]);
 
   useEffect(() => {
     rulesRef.current = rules;
@@ -1025,6 +1145,24 @@ function OnlineParty({
     playersRef.current = next;
     setPlayers(next);
   };
+
+  const appendChat = (message: ChatMessage) => {
+    const next = [...chatMessagesRef.current, message].slice(-80);
+    chatMessagesRef.current = next;
+    setChatMessages(next);
+  };
+
+  const createChatMessage = (
+    playerId: string,
+    playerName: string,
+    text: string,
+  ): ChatMessage => ({
+    id: `${Date.now()}-${playerId}-${Math.random().toString(36).slice(2, 7)}`,
+    playerId,
+    playerName,
+    text,
+    createdAt: Date.now(),
+  });
 
   const broadcast = (packet: RoomPacket, exceptId?: string) => {
     connectionsRef.current.forEach((connection, peerId) => {
@@ -1107,6 +1245,15 @@ function OnlineParty({
   };
 
   const handleHostPacket = (senderId: string, packet: RoomPacket) => {
+    if (packet.type === "chat-submit") {
+      const sender = playersRef.current.find((player) => player.id === senderId);
+      const text = cleanChatText(packet.text);
+      if (sender && text) {
+        const message = createChatMessage(sender.id, sender.name, text);
+        appendChat(message);
+        broadcast({ type: "chat", message });
+      }
+    }
     if (packet.type === "attack") {
       routeAttack(senderId, packet.amount);
     }
@@ -1183,6 +1330,7 @@ function OnlineParty({
         players: next,
         started: false,
         rules: rulesRef.current,
+        messages: chatMessagesRef.current,
       } satisfies RoomPacket);
       broadcast({
         type: "roster",
@@ -1248,6 +1396,9 @@ function OnlineParty({
       setLocalId(packet.selfId);
       replacePlayers(packet.players);
       setMatchRules(packet.rules);
+      const messages = packet.messages ?? [];
+      chatMessagesRef.current = messages;
+      setChatMessages(messages);
       setPhase(packet.started ? "playing" : "lobby");
     }
     if (packet.type === "roster") {
@@ -1268,6 +1419,9 @@ function OnlineParty({
     if (packet.type === "garbage") {
       setGarbageSignal({ id: packet.id, amount: packet.amount });
     }
+    if (packet.type === "chat") {
+      appendChat(packet.message);
+    }
     if (packet.type === "end") {
       replacePlayers(packet.players);
       setWinnerName(packet.winnerName);
@@ -1283,8 +1437,14 @@ function OnlineParty({
     }
   };
 
-  const joinRoom = async () => {
-    const code = joinCode.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  const joinRoom = async (
+    requestedCode = joinCode,
+    requestedName = playerName,
+  ) => {
+    const code = requestedCode
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6);
     if (code.length !== 6) {
       setRoomError("6자리 방 코드를 입력해 주세요.");
       return;
@@ -1300,7 +1460,7 @@ function OnlineParty({
       peerRef.current = peer;
       peer.on("open", () => {
         const connection = peer.connect(roomPeerId(code), {
-          metadata: { name: cleanPlayerName(playerName) },
+          metadata: { name: cleanPlayerName(requestedName) },
           serialization: "json",
           reliable: true,
         });
@@ -1326,6 +1486,30 @@ function OnlineParty({
       setPhase("entry");
     }
   };
+
+  useEffect(() => {
+    const code = initialRoomCode
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6);
+    if (
+      !canAutoJoin ||
+      code.length !== 6 ||
+      autoJoinAttemptedRef.current ||
+      phaseRef.current !== "entry"
+    ) {
+      return;
+    }
+    autoJoinAttemptedRef.current = true;
+    setJoinCode(code);
+    const timer = window.setTimeout(
+      () => void joinRoom(code, defaultPlayerName),
+      0,
+    );
+    return () => window.clearTimeout(timer);
+    // joinRoom intentionally reads the latest connection handlers for this mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canAutoJoin, defaultPlayerName, initialRoomCode]);
 
   const startMatch = () => {
     if (roleRef.current !== "host" || playersRef.current.length < 2) return;
@@ -1407,6 +1591,40 @@ function OnlineParty({
     }
   };
 
+  const sendChat = () => {
+    const text = cleanChatText(chatText);
+    const sender = playersRef.current.find(
+      (player) => player.id === localIdRef.current,
+    );
+    if (!text || !sender) return;
+    setChatText("");
+    if (roleRef.current === "host") {
+      const message = createChatMessage(sender.id, sender.name, text);
+      appendChat(message);
+      broadcast({ type: "chat", message });
+    } else if (hostConnectionRef.current?.open) {
+      hostConnectionRef.current.send({
+        type: "chat-submit",
+        text,
+      } satisfies RoomPacket);
+    }
+  };
+
+  const copyInviteLink = async () => {
+    const inviteUrl = new URL(window.location.href);
+    inviteUrl.searchParams.delete("recovery");
+    inviteUrl.searchParams.set("room", roomCode);
+    inviteUrl.hash = "";
+    try {
+      const copied = await copyText(inviteUrl.toString());
+      if (!copied) throw new Error("COPY_FAILED");
+      setInviteStatus("LINK COPIED ✓");
+      window.setTimeout(() => setInviteStatus("COPY INVITE LINK"), 1600);
+    } catch {
+      setRoomError(`초대 링크를 복사하지 못했습니다: ${inviteUrl.toString()}`);
+    }
+  };
+
   const leaveRoom = () => {
     connectionsRef.current.forEach((connection) => connection.close());
     connectionsRef.current.clear();
@@ -1423,6 +1641,9 @@ function OnlineParty({
     setRole(null);
     setWinnerName("");
     setRoomError("");
+    chatMessagesRef.current = [];
+    setChatMessages([]);
+    setChatText("");
     setPhase("entry");
   };
 
@@ -1490,11 +1711,14 @@ function OnlineParty({
                   )
                 }
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") joinRoom();
+                  if (event.key === "Enter") void joinRoom();
                 }}
                 disabled={phase === "connecting"}
               />
-              <button onClick={joinRoom} disabled={phase === "connecting"}>
+              <button
+                onClick={() => void joinRoom()}
+                disabled={phase === "connecting"}
+              >
                 {phase === "connecting" && role === "guest" ? "…" : "JOIN"}
               </button>
             </div>
@@ -1516,11 +1740,12 @@ function OnlineParty({
           <span>ROOM CODE</span>
           <strong>{roomCode}</strong>
           <button
-            onClick={() => navigator.clipboard.writeText(roomCode)}
-            aria-label="방 코드 복사"
+            onClick={() => void copyInviteLink()}
+            aria-label="방 초대 링크 복사"
           >
-            COPY CODE
+            {inviteStatus}
           </button>
+          <small>링크를 받은 사람은 이 방으로 바로 연결됩니다.</small>
         </div>
         <div className="lobby-main">
           <div className="lobby-heading">
@@ -1551,6 +1776,18 @@ function OnlineParty({
               고스트 {matchRules.ghost ? "ON" : "OFF"}
             </span>
           </p>
+          <div className="attack-rules">
+            <strong>ATTACK RULES</strong>
+            <span>2 / 3 / 4줄 = 1 / 2 / 4 GARBAGE</span>
+            <span>T-SPIN 1 / 2 / 3줄 = 2 / 4 / 6 GARBAGE</span>
+            <span>3번째 연속 클리어부터 COMBO +1, +2…</span>
+          </div>
+          <PartyChat
+            messages={chatMessages}
+            value={chatText}
+            onChange={setChatText}
+            onSend={sendChat}
+          />
           {roomError && <p className="room-error">{roomError}</p>}
           {role === "host" ? (
             <button
@@ -1588,6 +1825,12 @@ function OnlineParty({
             </div>
           ))}
         </div>
+        <PartyChat
+          messages={chatMessages}
+          value={chatText}
+          onChange={setChatText}
+          onSend={sendChat}
+        />
         <div className="result-actions">
           {role === "host" ? (
             <button className="start-online" onClick={startMatch}>
@@ -1645,6 +1888,12 @@ function OnlineParty({
               <RemoteBoard player={player} key={player.id} />
             ))}
           </div>
+          <PartyChat
+            messages={chatMessages}
+            value={chatText}
+            onChange={setChatText}
+            onSend={sendChat}
+          />
         </aside>
       </div>
     </section>
@@ -1827,6 +2076,25 @@ export default function GameClient() {
   const [identityReady, setIdentityReady] = useState(false);
   const [identityOpen, setIdentityOpen] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const [inviteRoomCode, setInviteRoomCode] = useState("");
+  const [multiplayerPlaying, setMultiplayerPlaying] = useState(false);
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search)
+      .get("room")
+      ?.toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6);
+    if (code?.length !== 6) return;
+    const timer = window.setTimeout(() => {
+      setInviteRoomCode(code);
+      setMultiplayerPlaying(false);
+      setRun((value) => value + 1);
+      setScreen("versus");
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const saved =
@@ -1925,6 +2193,17 @@ export default function GameClient() {
 
   const goHome = () => {
     setScreen("home");
+    setMultiplayerPlaying(false);
+    setInviteRoomCode("");
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("room")) {
+      url.searchParams.delete("room");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+    }
     const fullscreenDocument = document as Document & {
       webkitExitFullscreen?: () => void;
     };
@@ -1936,7 +2215,10 @@ export default function GameClient() {
   };
 
   const start = (nextScreen: Screen) => {
-    if (window.matchMedia("(max-width: 760px)").matches) {
+    if (
+      nextScreen !== "versus" &&
+      window.matchMedia("(max-width: 760px)").matches
+    ) {
       const fullscreenRoot = document.documentElement as HTMLElement & {
         webkitRequestFullscreen?: () => Promise<void> | void;
       };
@@ -1950,6 +2232,8 @@ export default function GameClient() {
         // Fullscreen is optional; the CSS game frame still fits the viewport.
       }
     }
+    setMultiplayerPlaying(false);
+    if (nextScreen !== "versus") setInviteRoomCode("");
     setRun((value) => value + 1);
     setScreen(nextScreen);
     window.requestAnimationFrame(() => {
@@ -1963,7 +2247,13 @@ export default function GameClient() {
 
   return (
     <main
-      className={`app-shell ${screen === "home" ? "screen-home" : "screen-playing"}`}
+      className={`app-shell ${
+        screen === "home"
+          ? "screen-home"
+          : screen === "versus" && !multiplayerPlaying
+            ? "screen-lobby"
+            : "screen-playing"
+      }`}
     >
       <header className="topbar">
         <button className="brand" onClick={goHome}>
@@ -2117,6 +2407,9 @@ export default function GameClient() {
             <OnlineParty
               rules={rules}
               defaultPlayerName={identity?.username ?? "PLAYER"}
+              initialRoomCode={inviteRoomCode}
+              canAutoJoin={identityReady && Boolean(identity)}
+              onPlayingChange={setMultiplayerPlaying}
               key={run}
             />
           ) : (
