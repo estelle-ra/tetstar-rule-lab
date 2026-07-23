@@ -33,6 +33,8 @@ Supabase 계정 기능을 사용하려면 `.env.example`을 참고해
   디렉터리, 모드별 기록과 RLS 정책
 - `supabase/migrations/20260723162000_lock_profile_and_record_writes.sql`:
   레벨·랭킹 기록을 브라우저에서 임의 수정하지 못하도록 쓰기 권한 잠금
+- `supabase/migrations/20260724002500_allow_username_auth_directory_read.sql`:
+  username 로그인 함수에 계정 디렉터리 읽기 권한만 부여
 - `supabase/functions/username-auth`: username 로그인과 비밀번호 재설정
 - 가입은 username + email + password, 로그인은 username + password
 

@@ -1,4 +1,5 @@
-import { createClient } from "npm:@supabase/supabase-js@2.57.0";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { withSupabase } from "jsr:@supabase/server@^1";
 
 const allowedOrigins = new Set([
   "https://estelle-ra.github.io",
@@ -7,27 +8,6 @@ const allowedOrigins = new Set([
 ]);
 
 const attempts = new Map<string, { count: number; resetAt: number }>();
-
-function firstConfigured(
-  directNames: string[],
-  collectionName: string,
-): string {
-  const collection = Deno.env.get(collectionName);
-  if (collection) {
-    try {
-      const values = JSON.parse(collection) as Record<string, string>;
-      const selected = values.default ?? Object.values(values)[0];
-      if (selected) return selected;
-    } catch {
-      // Fall back to the legacy single-key environment variable.
-    }
-  }
-  for (const name of directNames) {
-    const value = Deno.env.get(name);
-    if (value) return value;
-  }
-  return "";
-}
 
 function normalizeUsername(value: unknown) {
   return String(value ?? "")
@@ -85,125 +65,112 @@ function safeRedirect(value: unknown) {
   }
 }
 
-Deno.serve(async (request) => {
-  const origin = request.headers.get("origin") ?? "";
-  if (request.method === "OPTIONS") {
-    if (!allowedOrigins.has(origin)) {
-      return response(request, { error: "ORIGIN_NOT_ALLOWED" }, 403);
-    }
-    return new Response("ok", {
-      headers: {
-        "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Headers": "apikey, content-type",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        Vary: "Origin",
-      },
-    });
-  }
+const handler = {
+  fetch: withSupabase(
+    { auth: "publishable" },
+    async (request, context) => {
+      const origin = request.headers.get("origin") ?? "";
+      if (request.method === "OPTIONS") {
+        if (!allowedOrigins.has(origin)) {
+          return response(request, { error: "ORIGIN_NOT_ALLOWED" }, 403);
+        }
+        return new Response("ok", {
+          headers: {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Headers": "apikey, content-type",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            Vary: "Origin",
+          },
+        });
+      }
 
-  if (request.method !== "POST" || !allowedOrigins.has(origin)) {
-    return response(request, { error: "REQUEST_NOT_ALLOWED" }, 403);
-  }
+      if (request.method !== "POST" || !allowedOrigins.has(origin)) {
+        return response(request, { error: "REQUEST_NOT_ALLOWED" }, 403);
+      }
 
-  const url = Deno.env.get("SUPABASE_URL") ?? "";
-  const publishableKey = request.headers.get("apikey") ?? "";
-  const secretKey = firstConfigured(
-    ["SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
-    "SUPABASE_SECRET_KEYS",
-  );
-  if (!url || !publishableKey || !secretKey) {
-    return response(request, { error: "SERVER_NOT_CONFIGURED" }, 503);
-  }
-  if (
-    !publishableKey.startsWith("sb_publishable_") &&
-    publishableKey.split(".").length !== 3
-  ) {
-    return response(request, { error: "INVALID_CLIENT" }, 401);
-  }
+      let body: Record<string, unknown>;
+      try {
+        body = (await request.json()) as Record<string, unknown>;
+      } catch {
+        return response(request, { error: "INVALID_JSON" }, 400);
+      }
 
-  let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return response(request, { error: "INVALID_JSON" }, 400);
-  }
+      const action = String(body.action ?? "");
+      const username = normalizeUsername(body.username);
+      if (!/^[a-z0-9가-힣_-]{2,16}$/.test(username)) {
+        return response(request, { error: "username을 확인해주세요." }, 400);
+      }
+      if (isRateLimited(request, username)) {
+        return response(
+          request,
+          { error: "잠시 후 다시 시도해주세요." },
+          429,
+        );
+      }
 
-  const action = String(body.action ?? "");
-  const username = normalizeUsername(body.username);
-  if (!/^[a-z0-9가-힣_-]{2,16}$/.test(username)) {
-    return response(request, { error: "username을 확인해주세요." }, 400);
-  }
-  if (isRateLimited(request, username)) {
-    return response(
-      request,
-      { error: "잠시 후 다시 시도해주세요." },
-      429,
-    );
-  }
+      const { data: directory, error: directoryError } =
+        await context.supabaseAdmin
+          .from("account_directory")
+          .select("user_id, email, username_normalized")
+          .eq("username_normalized", username)
+          .maybeSingle();
 
-  const admin = createClient(url, secretKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
-  const client = createClient(url, publishableKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
+      if (directoryError) {
+        console.error("DIRECTORY_LOOKUP_FAILED", directoryError.code);
+        return response(
+          request,
+          { error: "로그인 서버 연결을 확인해주세요." },
+          500,
+        );
+      }
 
-  const { data: directory } = await admin
-    .from("account_directory")
-    .select("user_id, email, username_normalized")
-    .eq("username_normalized", username)
-    .maybeSingle();
+      if (action === "reset") {
+        if (directory?.email) {
+          await context.supabase.auth.resetPasswordForEmail(directory.email, {
+            redirectTo: safeRedirect(body.redirectTo),
+          });
+        }
+        return response(request, {
+          message: "등록된 계정이 있다면 재설정 메일을 보냈습니다.",
+        });
+      }
 
-  if (action === "reset") {
-    if (directory?.email) {
-      await client.auth.resetPasswordForEmail(directory.email, {
-        redirectTo: safeRedirect(body.redirectTo),
+      if (action !== "login" || typeof body.password !== "string") {
+        return response(request, { error: "INVALID_ACTION" }, 400);
+      }
+      if (!directory?.email) {
+        return response(
+          request,
+          { error: "username 또는 비밀번호가 올바르지 않습니다." },
+          401,
+        );
+      }
+
+      const { data, error } = await context.supabase.auth.signInWithPassword({
+        email: directory.email,
+        password: body.password,
       });
-    }
-    return response(request, {
-      message: "등록된 계정이 있다면 재설정 메일을 보냈습니다.",
-    });
-  }
+      if (error || !data.session || !data.user) {
+        console.warn("PASSWORD_LOGIN_REJECTED", error?.code ?? "NO_SESSION");
+        return response(
+          request,
+          { error: "username 또는 비밀번호가 올바르지 않습니다." },
+          401,
+        );
+      }
 
-  if (action !== "login" || typeof body.password !== "string") {
-    return response(request, { error: "INVALID_ACTION" }, 400);
-  }
-  if (!directory?.email) {
-    return response(
-      request,
-      { error: "username 또는 비밀번호가 올바르지 않습니다." },
-      401,
-    );
-  }
-
-  const { data, error } = await client.auth.signInWithPassword({
-    email: directory.email,
-    password: body.password,
-  });
-  if (error || !data.session || !data.user) {
-    return response(
-      request,
-      { error: "username 또는 비밀번호가 올바르지 않습니다." },
-      401,
-    );
-  }
-
-  return response(request, {
-    session: {
-      access_token: data.session.access_token,
-      refresh_token: data.session.refresh_token,
+      return response(request, {
+        session: {
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        },
+        user: {
+          id: data.user.id,
+          username: directory.username_normalized,
+        },
+      });
     },
-    user: {
-      id: data.user.id,
-      username: directory.username_normalized,
-    },
-  });
-});
+  ),
+};
+
+export default handler;

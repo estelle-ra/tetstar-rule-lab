@@ -58,6 +58,7 @@ test("ships without starter-only assets", async () => {
     authGate,
     migration,
     writeLockMigration,
+    directoryGrantMigration,
     usernameAuth,
   ] =
     await Promise.all([
@@ -74,6 +75,13 @@ test("ships without starter-only assets", async () => {
       readFile(
         new URL(
           "../supabase/migrations/20260723162000_lock_profile_and_record_writes.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../supabase/migrations/20260724002500_allow_username_auth_directory_read.sql",
           import.meta.url,
         ),
         "utf8",
@@ -122,6 +130,12 @@ test("ships without starter-only assets", async () => {
     writeLockMigration,
     /revoke insert, update on public\.mode_records/,
   );
+  assert.match(
+    directoryGrantMigration,
+    /grant select on public\.account_directory to service_role/,
+  );
+  assert.match(usernameAuth, /withSupabase/);
+  assert.match(usernameAuth, /context\.supabaseAdmin/);
   assert.match(usernameAuth, /username 또는 비밀번호가 올바르지 않습니다/);
   assert.doesNotMatch(usernameAuth, /sb_secret_|service_role.*=/i);
   await assert.rejects(
