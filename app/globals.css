@@ -111,13 +111,13 @@ input:focus-visible {
 }
 
 .brand strong {
-  font-size: 22px;
+  font-size: 28px;
   line-height: 1;
 }
 
 .brand small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 14px;
   margin-top: 5px;
 }
 
@@ -130,7 +130,7 @@ input:focus-visible {
 .topbar nav button {
   color: var(--muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.15em;
   padding: 0;
@@ -156,7 +156,7 @@ input:focus-visible {
   align-self: center;
   border: 1px solid #343840;
   color: #646a74;
-  font: 10px monospace;
+  font: 13px monospace;
   letter-spacing: 0.08em;
   padding: 4px 6px;
 }
@@ -165,7 +165,7 @@ input:focus-visible {
   align-items: center;
   color: #7f8791;
   display: flex;
-  font: 11px monospace;
+  font: 14px monospace;
   gap: 7px;
   justify-self: end;
   letter-spacing: 0.1em;
@@ -195,7 +195,7 @@ input:focus-visible {
 .kicker,
 .eyebrow {
   color: var(--orange);
-  font: 700 12px monospace;
+  font: 700 15px monospace;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -228,7 +228,7 @@ input:focus-visible {
 .hero-copy > p {
   color: #a7adb7;
   font-family: Arial, sans-serif;
-  font-size: 17px;
+  font-size: 20px;
   line-height: 1.8;
   margin: 0;
   max-width: 560px;
@@ -244,7 +244,7 @@ input:focus-visible {
 .hero-tags span {
   border: 1px solid #30343a;
   color: #6f7680;
-  font: 11px monospace;
+  font: 14px monospace;
   letter-spacing: 0.12em;
   padding: 8px 10px;
 }
@@ -254,7 +254,7 @@ input:focus-visible {
   border: 1px solid #3a4049;
   color: var(--cyan);
   cursor: pointer;
-  font: 10px monospace;
+  font: 13px monospace;
   letter-spacing: 0.08em;
   padding: 7px 9px;
 }
@@ -373,12 +373,12 @@ input:focus-visible {
 
 .section-title > span {
   color: var(--orange);
-  font: 11px monospace;
+  font: 14px monospace;
   letter-spacing: 0.16em;
 }
 
 .section-title h2 {
-  font-size: 42px;
+  font-size: 50px;
   letter-spacing: -0.04em;
   margin: 15px 0 9px;
 }
@@ -386,7 +386,7 @@ input:focus-visible {
 .section-title p {
   color: #737a84;
   font-family: Arial, sans-serif;
-  font-size: 14px;
+  font-size: 17px;
   line-height: 1.6;
   margin: 0;
 }
@@ -404,8 +404,8 @@ input:focus-visible {
   cursor: pointer;
   display: grid;
   gap: 16px;
-  grid-template-columns: 88px minmax(0, 1fr) auto auto;
-  min-height: 132px;
+  grid-template-columns: 108px minmax(0, 1fr) auto auto;
+  min-height: 156px;
   overflow: hidden;
   padding: 22px 25px;
   position: relative;
@@ -458,7 +458,7 @@ input:focus-visible {
 
 .mode-code {
   color: var(--accent);
-  font-size: 46px;
+  font-size: 58px;
   font-weight: 800;
   letter-spacing: -0.06em;
 }
@@ -469,27 +469,27 @@ input:focus-visible {
 }
 
 .mode-copy strong {
-  font-size: 24px;
+  font-size: 30px;
   letter-spacing: 0.05em;
 }
 
 .mode-copy small {
   color: #7c838d;
   font-family: Arial, sans-serif;
-  font-size: 13px;
+  font-size: 16px;
   line-height: 1.45;
   margin-top: 9px;
 }
 
 .mode-meta {
   color: #595f68;
-  font: 10px monospace;
+  font: 13px monospace;
   letter-spacing: 0.09em;
 }
 
 .mode-arrow {
   color: #555b65;
-  font-size: 26px;
+  font-size: 32px;
 }
 
 .play-screen {
@@ -529,7 +529,7 @@ input:focus-visible {
   border: 0;
   color: #8c939c;
   cursor: pointer;
-  font: 12px monospace;
+  font: 16px monospace;
   letter-spacing: 0.1em;
   padding: 8px 0;
 }
@@ -566,14 +566,14 @@ input:focus-visible {
 
 .play-toolbar span {
   color: #5f6670;
-  font: 10px monospace;
+  font: 15px monospace;
   letter-spacing: 0.13em;
   margin-bottom: 4px;
 }
 
 .play-toolbar strong {
   color: var(--cyan);
-  font: 12px monospace;
+  font: 16px monospace;
   letter-spacing: 0.08em;
 }
 
@@ -600,14 +600,14 @@ input:focus-visible {
 }
 
 .player-line h2 {
-  font-size: 25px;
+  font-size: clamp(36px, 2.4vw, 46px);
   letter-spacing: 0.04em;
   margin: 5px 0 0;
 }
 
 .status-dot {
   color: #77808a;
-  font: 11px monospace;
+  font: 16px monospace;
   letter-spacing: 0.1em;
 }
 
@@ -637,7 +637,10 @@ input:focus-visible {
   --cell: clamp(20px, 2.1vw, 28px);
   align-items: start;
   display: grid;
-  grid-template-columns: 108px auto 108px;
+  grid-template-columns:
+    clamp(118px, 13vw, 170px)
+    auto
+    clamp(118px, 13vw, 170px);
 }
 
 @media (min-width: 761px) {
@@ -654,8 +657,8 @@ input:focus-visible {
   .screen-playing .game-rig {
     --cell: clamp(
       26px,
-      min(3.2vw, calc((100dvh - 175px) / 20)),
-      38px
+      min(5.2vw, calc((100dvh - 202px) / 20)),
+      64px
     );
   }
 
@@ -667,6 +670,10 @@ input:focus-visible {
   }
 
   .screen-playing .mission-panel {
+    display: none;
+  }
+
+  .screen-playing .controls-hint {
     display: none;
   }
 }
@@ -757,7 +764,7 @@ input:focus-visible {
 .piece-rail > span {
   color: #656c75;
   display: block;
-  font: 10px monospace;
+  font: clamp(14px, 0.95vw, 18px) monospace;
   letter-spacing: 0.12em;
   margin-bottom: 11px;
 }
@@ -769,8 +776,8 @@ input:focus-visible {
 .mini-grid {
   display: grid;
   gap: 1px;
-  grid-template-columns: repeat(4, 13px);
-  grid-template-rows: repeat(2, 13px);
+  grid-template-columns: repeat(4, clamp(13px, 1.4vw, 23px));
+  grid-template-rows: repeat(2, clamp(13px, 1.4vw, 23px));
   justify-content: center;
   margin: 8px 0 14px;
 }
@@ -798,12 +805,12 @@ input:focus-visible {
 
 .rail-stat small {
   color: #5b626b;
-  font: 9px monospace;
+  font: clamp(14px, 0.9vw, 17px) monospace;
   margin-bottom: 4px;
 }
 
 .rail-stat strong {
-  font: 16px monospace;
+  font: clamp(24px, 1.45vw, 30px) monospace;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -853,7 +860,7 @@ input:focus-visible {
 
 .controls-hint {
   color: #575e67;
-  font: 10px monospace;
+  font: 13px monospace;
   letter-spacing: 0.05em;
   margin: 10px 0 0;
   text-align: center;
@@ -1669,20 +1676,20 @@ footer {
 
   .mode-card {
     grid-template-columns: 70px minmax(0, 1fr) auto;
-    min-height: 118px;
+    min-height: 130px;
     padding: 18px;
   }
 
   .mode-code {
-    font-size: 38px;
+    font-size: 44px;
   }
 
   .mode-copy strong {
-    font-size: 21px;
+    font-size: 24px;
   }
 
   .mode-copy small {
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .mode-meta {
@@ -1721,6 +1728,11 @@ footer {
     z-index: 20;
   }
 
+  .back-button,
+  .restart-button {
+    font-size: 13px;
+  }
+
   .toolbar-rules {
     justify-self: center;
     padding: 4px 6px;
@@ -1731,7 +1743,7 @@ footer {
   }
 
   .toolbar-rules strong {
-    font-size: 10px;
+    font-size: 11px;
   }
 
   .play-toolbar .restart-button,
@@ -1866,19 +1878,19 @@ footer {
   }
 
   .player-line h2 {
-    font-size: 18px;
+    font-size: 22px;
   }
 
   .status-dot {
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .rail-stat small {
-    font-size: 8px;
+    font-size: 10px;
   }
 
   .rail-stat strong {
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .mission-panel {
@@ -1922,7 +1934,7 @@ footer {
 
   .touch-button small {
     color: #727b87;
-    font: 8px monospace;
+    font: 10px monospace;
     letter-spacing: 0.08em;
     margin-bottom: 4px;
   }
@@ -1967,7 +1979,7 @@ footer {
   .touch-zone-hint {
     bottom: 8px;
     color: #555f6b;
-    font: 9px monospace;
+    font: 10px monospace;
     left: 8px;
     position: absolute;
   }
@@ -2081,11 +2093,11 @@ footer {
   }
 
   .rail-stat strong {
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .piece-rail {
-    font-size: 10px;
+    font-size: 12px;
   }
 }
 
