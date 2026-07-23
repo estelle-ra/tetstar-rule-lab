@@ -410,6 +410,16 @@ input:focus-visible {
   padding: 50px clamp(24px, 5vw, 80px) 76px;
 }
 
+.mode-section-primary {
+  background:
+    linear-gradient(135deg, rgba(255, 100, 52, 0.055), transparent 38%),
+    rgba(9, 11, 14, 0.58);
+  border-bottom: 1px solid var(--line);
+  border-top: 0;
+  padding-bottom: 54px;
+  padding-top: 42px;
+}
+
 .section-title > span {
   color: var(--orange);
   font: 14px monospace;
@@ -1764,6 +1774,10 @@ footer {
     grid-template-columns: 1fr;
   }
 
+  .mode-grid {
+    grid-template-columns: 1fr;
+  }
+
   .section-title p {
     max-width: 380px;
   }
@@ -1830,6 +1844,11 @@ footer {
 
   .mode-section {
     padding: 40px 18px 90px;
+  }
+
+  .mode-section-primary {
+    padding-bottom: 48px;
+    padding-top: 30px;
   }
 
   .mode-grid {

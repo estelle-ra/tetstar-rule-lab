@@ -2034,36 +2034,11 @@ export default function GameClient() {
 
       {screen === "home" ? (
         <>
-          <section className="hero">
-            <div className="hero-copy">
-              <span className="kicker">
-                <i /> MODERN STACKER / OPEN RULESET
-              </span>
-              <h1>
-                STACK FAST.
-                <br />
-                <span>CHANGE THE RULES.</span>
-              </h1>
-              <p>
-                익숙한 블록 스태커의 속도감에 실험 가능한 룰을 더했습니다.
-                혼자 기록을 깨거나, 방 코드로 팀원들과 바로 맞붙어보세요.
-              </p>
-              <div className="hero-tags">
-                <span>7-BAG</span>
-                <span>HOLD</span>
-                <span>GHOST</span>
-                <span>GARBAGE</span>
-                <button onClick={() => setRulesOpen(true)}>⚙ RULE SETTINGS</button>
-              </div>
-            </div>
-            <DemoStack />
-          </section>
-
-          <section className="mode-section">
+          <section className="mode-section mode-section-primary">
             <div className="section-title">
               <span>01 / SELECT MODE</span>
               <h2>게임 모드</h2>
-              <p>연습부터 최대 8인 온라인 대전까지 바로 시작할 수 있습니다.</p>
+              <p>플레이할 모드를 먼저 선택하세요. 모든 모드는 같은 기본 조작을 사용합니다.</p>
             </div>
             <div className="mode-grid">
               <ModeCard
@@ -2099,6 +2074,39 @@ export default function GameClient() {
                 onClick={() => start("versus")}
               />
             </div>
+          </section>
+
+          <section className="hero">
+            <div className="hero-copy">
+              <span className="kicker">
+                <i /> MODERN STACKER / OPEN RULESET
+              </span>
+              <h1>
+                STACK FAST.
+                <br />
+                <span>CHANGE THE RULES.</span>
+              </h1>
+              <p>
+                익숙한 블록 스태커의 속도감에 실험 가능한 룰을 더했습니다.
+                혼자 기록을 깨거나, 방 코드로 팀원들과 바로 맞붙어보세요.
+              </p>
+              <div className="hero-tags">
+                <span title="7종 블록이 한 번씩 섞여 나오는 공정한 순서">
+                  7-BAG · 7종 균등
+                </span>
+                <span title="현재 블록을 보관했다가 다른 블록과 교체">
+                  HOLD · 블록 보관
+                </span>
+                <span title="블록이 떨어질 착지 위치를 미리 표시">
+                  GHOST · 착지 미리보기
+                </span>
+                <span title="멀티플레이에서 상대에게 보내는 방해 줄">
+                  GARBAGE · 공격 방해줄
+                </span>
+                <button onClick={() => setRulesOpen(true)}>⚙ RULE SETTINGS</button>
+              </div>
+            </div>
+            <DemoStack />
           </section>
         </>
       ) : (

@@ -41,6 +41,12 @@ test("server-renders the complete game selector", async () => {
   assert.match(html, /ONLINE PARTY/);
   assert.match(html, /2–8 PLAYERS/);
   assert.match(html, /RULE LAB/);
+  assert.match(html, /7-BAG · 7종 균등/);
+  assert.match(html, /GARBAGE · 공격 방해줄/);
+  assert.ok(
+    html.indexOf("게임 모드") < html.indexOf("STACK FAST"),
+    "mode selection should render before the promotional hero",
+  );
   assert.match(html, /og\.png/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview/);
 });
