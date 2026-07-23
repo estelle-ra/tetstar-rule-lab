@@ -74,9 +74,10 @@ type RoomPacket =
       selfId: string;
       players: RoomPlayer[];
       started: boolean;
+      rules: Rules;
     }
-  | { type: "roster"; players: RoomPlayer[]; started: boolean }
-  | { type: "start"; matchId: number; players: RoomPlayer[] }
+  | { type: "roster"; players: RoomPlayer[]; started: boolean; rules: Rules }
+  | { type: "start"; matchId: number; players: RoomPlayer[]; rules: Rules }
   | { type: "attack"; amount: number }
   | { type: "garbage"; id: number; amount: number }
   | { type: "snapshot"; playerId?: string; snapshot: GameSnapshot }
@@ -292,16 +293,20 @@ function GameBoard({
   const [seconds, setSeconds] = useState(mode === "blitz" ? 120 : 0);
   const [flash, setFlash] = useState("");
   const [joystickVector, setJoystickVector] = useState({ x: 0, y: 0 });
+  const [joystickOrigin, setJoystickOrigin] = useState({ x: 0, y: 0 });
+  const [joystickActive, setJoystickActive] = useState(false);
   const finishSent = useRef(false);
   const snapshotSentAt = useRef(0);
   const repeatHandles = useRef(new Map<string, RepeatHandle>());
   const actionRef = useRef<(action: GameAction) => void>(() => undefined);
+  const stepDownRef = useRef<() => void>(() => undefined);
   const lockDeadlineRef = useRef<number | null>(null);
   const groundedLimitRef = useRef<number | null>(null);
   const lockResetCount = useRef(0);
   const lastActionWasRotation = useRef(false);
   const joystickPointer = useRef<number | null>(null);
   const joystickDirection = useRef<GameAction | null>(null);
+  const joystickOriginRef = useRef({ x: 0, y: 0 });
 
   const finish = useCallback(
     (nextStatus: "won" | "lost") => {
@@ -405,11 +410,15 @@ function GameBoard({
   }, [active, board, status]);
 
   useEffect(() => {
+    stepDownRef.current = stepDown;
+  }, [stepDown]);
+
+  useEffect(() => {
     if (status !== "playing") return;
     const gravity = Math.max(90, rules.gravity - Math.floor(lines / 10) * 55);
-    const timer = window.setInterval(stepDown, gravity);
+    const timer = window.setInterval(() => stepDownRef.current(), gravity);
     return () => window.clearInterval(timer);
-  }, [lines, rules.gravity, status, stepDown]);
+  }, [lines, rules.gravity, status]);
 
   useEffect(() => {
     if (status !== "playing") return;
@@ -682,20 +691,20 @@ function GameBoard({
     if (joystickPointer.current !== event.pointerId) return;
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
-    const rawX = event.clientX - (rect.left + rect.width / 2);
-    const rawY = event.clientY - (rect.top + rect.height / 2);
+    const rawX = event.clientX - rect.left - joystickOriginRef.current.x;
+    const rawY = event.clientY - rect.top - joystickOriginRef.current.y;
     const distance = Math.hypot(rawX, rawY);
-    const radius = 29;
+    const radius = 46;
     const scale = distance > radius ? radius / distance : 1;
     const x = rawX * scale;
     const y = rawY * scale;
     setJoystickVector({ x, y });
 
     let nextDirection: GameAction | null = null;
-    if (distance >= 10) {
-      if (Math.abs(x) > Math.abs(y) * 0.75) {
+    if (distance >= 18) {
+      if (Math.abs(x) > Math.abs(y) * 0.9) {
         nextDirection = x < 0 ? "left" : "right";
-      } else if (y > 0) {
+      } else if (y > 12) {
         nextDirection = "down";
       }
     }
@@ -706,21 +715,32 @@ function GameBoard({
       startRepeat(
         "joystick",
         nextDirection,
-        nextDirection === "down" ? 55 : 85,
-        nextDirection === "down" ? 26 : 32,
+        nextDirection === "down" ? 90 : 125,
+        nextDirection === "down" ? 38 : 48,
       );
     }
   };
 
   const startJoystick = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const margin = 58;
+    const origin = {
+      x: Math.max(margin, Math.min(rect.width - margin, event.clientX - rect.left)),
+      y: Math.max(margin, Math.min(rect.height - margin, event.clientY - rect.top)),
+    };
     joystickPointer.current = event.pointerId;
+    joystickOriginRef.current = origin;
+    setJoystickOrigin(origin);
+    setJoystickActive(true);
+    setJoystickVector({ x: 0, y: 0 });
     event.currentTarget.setPointerCapture(event.pointerId);
-    updateJoystick(event);
   };
 
   const stopJoystick = () => {
     joystickPointer.current = null;
     joystickDirection.current = null;
+    setJoystickActive(false);
     setJoystickVector({ x: 0, y: 0 });
     stopRepeat("joystick");
   };
@@ -837,50 +857,67 @@ function GameBoard({
             <small>{mode === "blitz" ? "LEFT" : "TIME"}</small>
             <strong>{formatTime(seconds)}</strong>
           </div>
+          <div className="rail-stat level-stat">
+            <small>LEVEL</small>
+            <strong>{Math.floor(lines / 10) + 1}</strong>
+          </div>
         </aside>
       </div>
       <div className="mobile-controls" aria-label="모바일 게임 조작">
-        <button
-          className="touch-button touch-hold"
-          aria-label="블록 홀드"
-          onPointerDown={(event) => handleMobilePress(event, "hold")}
-        >
-          <small>HOLD</small>
-          ⇧
-        </button>
         <div
-          className="touch-joystick"
+          className={`touch-zone ${joystickActive ? "touch-zone-active" : ""}`}
           role="group"
-          aria-label="이동 조이스틱"
+          aria-label="왼손 이동 조이스틱"
           onPointerDown={startJoystick}
           onPointerMove={updateJoystick}
           onPointerUp={stopJoystick}
           onPointerCancel={stopJoystick}
           onLostPointerCapture={stopJoystick}
         >
-          <span className="joystick-arrows">← ↓ →</span>
-          <span
-            className="joystick-stick"
-            style={{
-              transform: `translate(${joystickVector.x}px, ${joystickVector.y}px)`,
-            }}
-          />
+          <span className="touch-zone-hint">왼손으로 터치한 뒤 끌어서 이동</span>
+          {joystickActive && (
+            <span
+              className="joystick-base"
+              style={{
+                left: `${joystickOrigin.x}px`,
+                top: `${joystickOrigin.y}px`,
+              }}
+            >
+              <span className="joystick-deadzone" />
+              <span
+                className="joystick-stick"
+                style={{
+                  transform: `translate(${joystickVector.x}px, ${joystickVector.y}px)`,
+                }}
+              />
+            </span>
+          )}
         </div>
-        <button
-          className="touch-button touch-rotate"
-          aria-label="블록 회전"
-          onPointerDown={(event) => handleMobilePress(event, "rotateCW")}
-        >
-          ↻
-        </button>
-        <button
-          className="touch-button touch-drop"
-          aria-label="블록 즉시 내리기"
-          onPointerDown={(event) => handleMobilePress(event, "hardDrop")}
-        >
-          <small>DROP</small>
-          ⇣
-        </button>
+        <div className="touch-actions" aria-label="오른손 액션 버튼">
+          <button
+            className="touch-button touch-rotate"
+            aria-label="블록 회전"
+            onPointerDown={(event) => handleMobilePress(event, "rotateCW")}
+          >
+            ↻
+          </button>
+          <button
+            className="touch-button touch-hold"
+            aria-label="블록 홀드"
+            onPointerDown={(event) => handleMobilePress(event, "hold")}
+          >
+            <small>HOLD</small>
+            ⇧
+          </button>
+          <button
+            className="touch-button touch-drop"
+            aria-label="블록 즉시 내리기"
+            onPointerDown={(event) => handleMobilePress(event, "hardDrop")}
+          >
+            <small>DROP</small>
+            ⇣
+          </button>
+        </div>
       </div>
       <p className="controls-hint">
         <span className="desktop-control-label">{controlLabel}</span>
@@ -952,6 +989,7 @@ function OnlineParty({ rules }: { rules: Rules }) {
   const [roomError, setRoomError] = useState("");
   const [winnerName, setWinnerName] = useState("");
   const [matchId, setMatchId] = useState(0);
+  const [matchRules, setMatchRules] = useState(rules);
   const [garbageSignal, setGarbageSignal] = useState({ id: 0, amount: 0 });
   const peerRef = useRef<PeerInstance | null>(null);
   const hostConnectionRef = useRef<DataConnection | null>(null);
@@ -960,7 +998,15 @@ function OnlineParty({ rules }: { rules: Rules }) {
   const localIdRef = useRef("");
   const roleRef = useRef<"host" | "guest" | null>(null);
   const phaseRef = useRef(phase);
+  const rulesRef = useRef(rules);
   const targetCursor = useRef(0);
+
+  useEffect(() => {
+    rulesRef.current = rules;
+    if (roleRef.current !== "guest" && phaseRef.current !== "playing") {
+      setMatchRules(rules);
+    }
+  }, [rules]);
 
   const setPhase = (next: typeof phase) => {
     phaseRef.current = next;
@@ -989,6 +1035,7 @@ function OnlineParty({ rules }: { rules: Rules }) {
       type: "roster",
       players: next,
       started: phaseRef.current === "playing",
+      rules: rulesRef.current,
     });
   };
 
@@ -1127,8 +1174,14 @@ function OnlineParty({ rules }: { rules: Rules }) {
         selfId: connection.peer,
         players: next,
         started: false,
+        rules: rulesRef.current,
       } satisfies RoomPacket);
-      broadcast({ type: "roster", players: next, started: false });
+      broadcast({
+        type: "roster",
+        players: next,
+        started: false,
+        rules: rulesRef.current,
+      });
     });
     connection.on("data", (data) =>
       handleHostPacket(connection.peer, data as RoomPacket),
@@ -1186,13 +1239,16 @@ function OnlineParty({ rules }: { rules: Rules }) {
       localIdRef.current = packet.selfId;
       setLocalId(packet.selfId);
       replacePlayers(packet.players);
+      setMatchRules(packet.rules);
       setPhase(packet.started ? "playing" : "lobby");
     }
     if (packet.type === "roster") {
       replacePlayers(packet.players);
+      if (phaseRef.current !== "playing") setMatchRules(packet.rules);
     }
     if (packet.type === "start") {
       replacePlayers(packet.players);
+      setMatchRules(packet.rules);
       setMatchId(packet.matchId);
       setWinnerName("");
       setGarbageSignal({ id: 0, amount: 0 });
@@ -1289,9 +1345,15 @@ function OnlineParty({ rules }: { rules: Rules }) {
     setRoomError("");
     setWinnerName("");
     setMatchId(nextMatchId);
+    setMatchRules(rulesRef.current);
     setGarbageSignal({ id: 0, amount: 0 });
     setPhase("playing");
-    broadcast({ type: "start", matchId: nextMatchId, players: next });
+    broadcast({
+      type: "start",
+      matchId: nextMatchId,
+      players: next,
+      rules: rulesRef.current,
+    });
   };
 
   const shareSnapshot = useCallback((snapshot: GameSnapshot) => {
@@ -1474,6 +1536,13 @@ function OnlineParty({ rules }: { rules: Rules }) {
               );
             })}
           </div>
+          <p className="lobby-rules">
+            <strong>HOST RULES</strong>
+            <span>
+              {matchRules.gravity}ms 낙하 · 공격 {matchRules.attack.toFixed(1)}× ·
+              고스트 {matchRules.ghost ? "ON" : "OFF"}
+            </span>
+          </p>
           {roomError && <p className="room-error">{roomError}</p>}
           {role === "host" ? (
             <button
@@ -1549,7 +1618,7 @@ function OnlineParty({ rules }: { rules: Rules }) {
               key={matchId}
               player={localPlayer.name}
               controls={SINGLE_CONTROLS}
-              rules={rules}
+              rules={matchRules}
               mode="versus"
               garbage={garbageSignal}
               onAttack={sendAttack}
@@ -1577,26 +1646,38 @@ function OnlineParty({ rules }: { rules: Rules }) {
 function RulesPanel({
   rules,
   setRules,
+  onClose,
+  multiplayer,
 }: {
   rules: Rules;
   setRules: (rules: Rules) => void;
+  onClose: () => void;
+  multiplayer: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <aside className={`rules-panel ${open ? "rules-open" : ""}`}>
-      <button
-        className="rules-toggle"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
+    <div
+      className="rules-backdrop"
+      role="presentation"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <aside
+        className="rules-panel rules-open"
+        role="dialog"
+        aria-modal="true"
+        aria-label="룰 설정"
       >
-        <span className="rules-icon">⌁</span>
-        <span>
-          <small>EXPERIMENTAL</small>
-          <strong>RULE LAB</strong>
-        </span>
-        <span>{open ? "−" : "+"}</span>
-      </button>
-      {open && (
+        <div className="rules-heading">
+          <span className="rules-icon">⌁</span>
+          <span>
+            <small>EXPERIMENTAL</small>
+            <strong>RULE LAB</strong>
+          </span>
+          <button onClick={onClose} aria-label="룰 설정 닫기">
+            ×
+          </button>
+        </div>
         <div className="rules-body">
           <label>
             <span>
@@ -1613,10 +1694,11 @@ function RulesPanel({
                 setRules({ ...rules, gravity: Number(event.target.value) })
               }
             />
+            <small>10줄을 지울 때마다 55ms 빨라지며, 최소 90ms입니다.</small>
           </label>
           <label>
             <span>
-              <strong>공격 배율</strong>
+              <strong>공격(가비지) 배율</strong>
               <em>{rules.attack.toFixed(1)}×</em>
             </span>
             <input
@@ -1629,6 +1711,7 @@ function RulesPanel({
                 setRules({ ...rules, attack: Number(event.target.value) })
               }
             />
+            <small>라인 클리어와 T-Spin으로 상대에게 보내는 방해 줄 수입니다.</small>
           </label>
           <button
             className="switch-row"
@@ -1641,10 +1724,16 @@ function RulesPanel({
             </span>
             <span className={`switch ${rules.ghost ? "switch-on" : ""}`} />
           </button>
-          <p>설정은 이 브라우저에 자동 저장됩니다.</p>
+          <p>
+            {multiplayer
+              ? "온라인 대전은 방장의 설정을 모든 참가자에게 동일하게 적용합니다."
+              : "싱글에서는 공격 배율이 점수나 플레이에 영향을 주지 않습니다."}
+            <br />
+            설정은 이 브라우저에 자동 저장됩니다.
+          </p>
         </div>
-      )}
-    </aside>
+      </aside>
+    </div>
   );
 }
 
@@ -1725,6 +1814,7 @@ export default function GameClient() {
   const [screen, setScreen] = useState<Screen>("home");
   const [run, setRun] = useState(0);
   const [rules, setRulesState] = useState<Rules>(DEFAULT_RULES);
+  const [rulesOpen, setRulesOpen] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tetrix-rules-v2");
@@ -1806,7 +1896,7 @@ export default function GameClient() {
           >
             PLAY
           </button>
-          <button onClick={() => document.getElementById("rule-lab")?.click()}>
+          <button onClick={() => setRulesOpen(true)}>
             RULES
           </button>
           <span className="version">ALPHA 0.1</span>
@@ -1838,6 +1928,7 @@ export default function GameClient() {
                 <span>HOLD</span>
                 <span>GHOST</span>
                 <span>GARBAGE</span>
+                <button onClick={() => setRulesOpen(true)}>⚙ RULE SETTINGS</button>
               </div>
             </div>
             <DemoStack />
@@ -1891,12 +1982,16 @@ export default function GameClient() {
             <button className="back-button" onClick={goHome}>
               ← MODE SELECT
             </button>
-            <div>
+            <button
+              className="toolbar-rules"
+              onClick={() => setRulesOpen(true)}
+              aria-label="룰 설정 열기"
+            >
               <span>ACTIVE RULESET</span>
               <strong>
-                {rules.gravity}MS / {rules.attack.toFixed(1)}× ATTACK
+                ⚙ {rules.gravity}MS / {rules.attack.toFixed(1)}× ATTACK
               </strong>
-            </div>
+            </button>
             {screen === "versus" ? (
               <span className="online-mode-label">ROOM CODE / P2P</span>
             ) : (
@@ -1963,9 +2058,14 @@ export default function GameClient() {
         </section>
       )}
 
-      <div id="rule-lab">
-        <RulesPanel rules={rules} setRules={setRules} />
-      </div>
+      {rulesOpen && (
+        <RulesPanel
+          rules={rules}
+          setRules={setRules}
+          onClose={() => setRulesOpen(false)}
+          multiplayer={screen === "versus"}
+        />
+      )}
 
       <footer>
         <span>ORIGINAL STACKER PROTOTYPE · NOT AFFILIATED WITH TETR.IO</span>

@@ -67,7 +67,13 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /const LOCK_DELAY_MS = 350/);
   assert.match(gameClient, /const MAX_LOCK_RESETS = 8/);
   assert.match(gameClient, /const MAX_GROUNDED_MS = 1800/);
-  assert.match(gameClient, /aria-label="이동 조이스틱"/);
+  assert.match(gameClient, /aria-label="왼손 이동 조이스틱"/);
+  assert.match(gameClient, /className="joystick-base"/);
+  assert.match(gameClient, /const radius = 46/);
+  assert.match(gameClient, /distance >= 18/);
+  assert.match(gameClient, /stepDownRef\.current\(\)/);
+  assert.match(gameClient, /rules: rulesRef\.current/);
+  assert.match(gameClient, /온라인 대전은 방장의 설정을 모든 참가자에게 동일하게 적용합니다/);
   assert.match(gameClient, /T-SPIN DOUBLE!/);
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
