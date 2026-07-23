@@ -1921,7 +1921,7 @@ export default function GameClient() {
               </h1>
               <p>
                 익숙한 블록 스태커의 속도감에 실험 가능한 룰을 더했습니다.
-                혼자 기록을 깨거나, 한 키보드로 바로 맞붙어보세요.
+                혼자 기록을 깨거나, 방 코드로 팀원들과 바로 맞붙어보세요.
               </p>
               <div className="hero-tags">
                 <span>7-BAG</span>
@@ -1938,7 +1938,7 @@ export default function GameClient() {
             <div className="section-title">
               <span>01 / SELECT MODE</span>
               <h2>게임 모드</h2>
-              <p>연습부터 로컬 대전까지, 바로 시작할 수 있습니다.</p>
+              <p>연습부터 최대 8인 온라인 대전까지 바로 시작할 수 있습니다.</p>
             </div>
             <div className="mode-grid">
               <ModeCard
