@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { DataConnection, Peer as PeerInstance } from "peerjs";
+import AuthGate, { type PlayerIdentity } from "./AuthGate";
+import { supabase } from "./lib/supabase";
 
 type PieceName = "I" | "J" | "L" | "O" | "S" | "T" | "Z";
 type Cell = PieceName | "G" | null;
@@ -50,11 +52,6 @@ type Rules = {
   gravity: number;
   attack: number;
   ghost: boolean;
-};
-
-type LocalIdentity = {
-  username: string;
-  guest: true;
 };
 
 type GameSnapshot = {
@@ -947,15 +944,7 @@ function roomPeerId(code: string) {
 }
 
 function cleanPlayerName(value: string) {
-  return value.trim().replace(/\s+/g, " ").slice(0, 14) || "PLAYER";
-}
-
-function normalizeUsername(value: string) {
-  return value
-    .trim()
-    .replace(/\s+/g, "_")
-    .replace(/[^\p{L}\p{N}_-]/gu, "")
-    .slice(0, 16);
+  return value.trim().replace(/\s+/g, " ").slice(0, 16) || "PLAYER";
 }
 
 function RemoteBoard({
@@ -1467,7 +1456,7 @@ function OnlineParty({
           <span>PLAYER NAME</span>
           <input
             value={playerName}
-            maxLength={14}
+            maxLength={16}
             onChange={(event) => setPlayerName(event.target.value)}
             disabled={phase === "connecting"}
           />
@@ -1829,81 +1818,15 @@ function DemoStack() {
   );
 }
 
-function IdentityGate({
-  currentName,
-  canClose,
-  onContinue,
-  onClose,
-}: {
-  currentName?: string;
-  canClose: boolean;
-  onContinue: (username: string) => void;
-  onClose: () => void;
-}) {
-  const [username, setUsername] = useState(currentName ?? "");
-  const normalized = normalizeUsername(username);
-
-  const submit = () => {
-    if (normalized.length < 2) return;
-    onContinue(normalized);
-  };
-
-  return (
-    <div className="identity-gate" role="dialog" aria-modal="true">
-      <div className="identity-card">
-        {canClose && (
-          <button
-            className="identity-close"
-            onClick={onClose}
-            aria-label="닫기"
-          >
-            ×
-          </button>
-        )}
-        <span className="eyebrow">PLAYER IDENTITY</span>
-        <h2>WELCOME TO TETSTAR</h2>
-        <p>
-          먼저 게임에서 사용할 username을 정해주세요. 계정 연결 전에는 이
-          기기에 게스트로 저장됩니다.
-        </p>
-        <label>
-          <span>USERNAME</span>
-          <input
-            autoFocus
-            autoComplete="username"
-            maxLength={16}
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") submit();
-            }}
-            placeholder="2–16자 / 한글·영문·숫자"
-          />
-        </label>
-        <button
-          className="identity-submit"
-          disabled={normalized.length < 2}
-          onClick={submit}
-        >
-          {currentName ? "SAVE USERNAME →" : "GUEST PLAY →"}
-        </button>
-        <p className="identity-note">
-          다음 단계에서 이메일·비밀번호 계정을 연결하면 기록과 프로필을 여러
-          기기에서 이어갈 수 있습니다.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 export default function GameClient() {
   const [screen, setScreen] = useState<Screen>("home");
   const [run, setRun] = useState(0);
   const [rules, setRulesState] = useState<Rules>(DEFAULT_RULES);
   const [rulesOpen, setRulesOpen] = useState(false);
-  const [identity, setIdentity] = useState<LocalIdentity | null>(null);
+  const [identity, setIdentity] = useState<PlayerIdentity | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
   const [identityOpen, setIdentityOpen] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
 
   useEffect(() => {
     const saved =
@@ -1922,20 +1845,61 @@ export default function GameClient() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      try {
-        const saved = window.localStorage.getItem("tetstar-identity-v1");
-        if (saved) {
-          const parsed = JSON.parse(saved) as LocalIdentity;
-          const username = normalizeUsername(parsed.username);
-          if (username.length >= 2) setIdentity({ username, guest: true });
+      void (async () => {
+        try {
+          const session = await supabase?.auth.getSession();
+          const account = session?.data.session?.user;
+          const accountName = cleanPlayerName(
+            String(account?.user_metadata?.username ?? ""),
+          );
+          if (account && accountName !== "PLAYER") {
+            setIdentity({
+              username: accountName.toUpperCase(),
+              guest: false,
+              userId: account.id,
+            });
+            return;
+          }
+
+          const saved = window.localStorage.getItem("tetstar-identity-v1");
+          if (saved) {
+            const parsed = JSON.parse(saved) as PlayerIdentity;
+            const username = cleanPlayerName(parsed.username);
+            if (username !== "PLAYER") {
+              setIdentity({ username: username.toUpperCase(), guest: true });
+            }
+          }
+        } catch {
+          window.localStorage.removeItem("tetstar-identity-v1");
+        } finally {
+          setIdentityReady(true);
         }
-      } catch {
-        window.localStorage.removeItem("tetstar-identity-v1");
-      } finally {
-        setIdentityReady(true);
-      }
+      })();
     }, 0);
-    return () => window.clearTimeout(timer);
+
+    const authListener = supabase?.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryMode(true);
+        setIdentityOpen(true);
+      }
+      if (session?.user) {
+        const username = cleanPlayerName(
+          String(session.user.user_metadata?.username ?? ""),
+        );
+        if (username !== "PLAYER") {
+          setIdentity({
+            username: username.toUpperCase(),
+            guest: false,
+            userId: session.user.id,
+          });
+        }
+      }
+    });
+
+    return () => {
+      window.clearTimeout(timer);
+      authListener?.data.subscription.unsubscribe();
+    };
   }, []);
 
   const setRules = (next: Rules) => {
@@ -1943,11 +1907,20 @@ export default function GameClient() {
     window.localStorage.setItem("tetstar-rules-v3", JSON.stringify(next));
   };
 
-  const saveIdentity = (username: string) => {
-    const next: LocalIdentity = { username, guest: true };
+  const saveIdentity = (next: PlayerIdentity) => {
     setIdentity(next);
     setIdentityOpen(false);
-    window.localStorage.setItem("tetstar-identity-v1", JSON.stringify(next));
+    if (next.guest) {
+      window.localStorage.setItem("tetstar-identity-v1", JSON.stringify(next));
+    } else {
+      window.localStorage.removeItem("tetstar-identity-v1");
+    }
+  };
+
+  const signOutIdentity = () => {
+    setIdentity(null);
+    setIdentityOpen(true);
+    window.localStorage.removeItem("tetstar-identity-v1");
   };
 
   const goHome = () => {
@@ -2022,7 +1995,13 @@ export default function GameClient() {
             className="profile-button"
             onClick={() => setIdentityOpen(true)}
           >
-            <small>{identity ? "GUEST PROFILE" : "PLAYER ID"}</small>
+            <small>
+              {identity
+                ? identity.guest
+                  ? "GUEST PROFILE"
+                  : "PLAYER PROFILE"
+                : "PLAYER ID"}
+            </small>
             {identity?.username ?? "SET USERNAME"}
           </button>
           <div className="server-status">
@@ -2205,10 +2184,13 @@ export default function GameClient() {
       )}
 
       {(!identityReady || !identity || identityOpen) && (
-        <IdentityGate
-          currentName={identity?.username}
+        <AuthGate
+          identity={identity}
           canClose={Boolean(identity)}
-          onContinue={saveIdentity}
+          recoveryMode={recoveryMode}
+          onIdentity={saveIdentity}
+          onSignOut={signOutIdentity}
+          onRecoveryComplete={() => setRecoveryMode(false)}
           onClose={() => setIdentityOpen(false)}
         />
       )}

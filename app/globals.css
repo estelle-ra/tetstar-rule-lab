@@ -1637,6 +1637,12 @@ input[type="range"] {
   width: 100%;
 }
 
+.auth-card {
+  max-height: calc(100dvh - 30px);
+  max-width: 620px;
+  overflow-y: auto;
+}
+
 .identity-card .eyebrow {
   color: #d94d24;
   font-size: 12px;
@@ -1658,6 +1664,7 @@ input[type="range"] {
 
 .identity-card label {
   display: block;
+  margin-top: 13px;
 }
 
 .identity-card label span {
@@ -1699,6 +1706,107 @@ input[type="range"] {
 .identity-submit:disabled {
   cursor: not-allowed;
   opacity: 0.42;
+}
+
+.auth-tabs {
+  background: #d8d6d1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 22px 0 18px;
+  padding: 4px;
+}
+
+.auth-tabs button {
+  background: transparent;
+  border: 0;
+  color: #5f646b;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 42px;
+}
+
+.auth-tabs button.auth-tab-active {
+  background: #15191f;
+  color: #fff;
+}
+
+.auth-intro {
+  color: #5b626b !important;
+  font-size: 14px !important;
+  margin: 0 0 18px !important;
+}
+
+.auth-feedback {
+  border: 1px solid;
+  font-size: 13px !important;
+  line-height: 1.45 !important;
+  margin: 13px 0 0 !important;
+  padding: 10px 12px;
+}
+
+.auth-error {
+  background: rgba(200, 47, 38, 0.09);
+  border-color: rgba(160, 30, 24, 0.32);
+  color: #a22b23 !important;
+}
+
+.auth-success {
+  background: rgba(20, 130, 100, 0.09);
+  border-color: rgba(20, 130, 100, 0.3);
+  color: #176f58 !important;
+}
+
+.auth-text-button {
+  background: transparent;
+  border: 0;
+  color: #4e5ac7;
+  cursor: pointer;
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 13px auto 0;
+  padding: 7px;
+}
+
+.profile-summary {
+  background: #fff;
+  border: 2px solid #22272d;
+  padding: 16px;
+}
+
+.profile-summary span,
+.profile-summary strong {
+  display: block;
+}
+
+.profile-summary span {
+  color: #d94d24;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.profile-summary strong {
+  font-size: 28px;
+  margin-top: 5px;
+}
+
+.auth-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 14px;
+}
+
+.auth-actions button {
+  background: #15191f;
+  border: 0;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  min-height: 50px;
 }
 
 .identity-note {
@@ -1823,6 +1931,23 @@ footer {
   .topbar {
     height: 64px;
     padding: 0 18px;
+  }
+
+  .identity-gate {
+    padding: 10px;
+  }
+
+  .identity-card {
+    padding: 22px 18px;
+  }
+
+  .identity-card h2 {
+    font-size: 32px;
+  }
+
+  .identity-card input {
+    font-size: 18px;
+    height: 52px;
   }
 
   .hero {

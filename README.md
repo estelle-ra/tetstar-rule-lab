@@ -23,6 +23,19 @@ npm run dev
 
 기본 주소는 `http://localhost:3000`입니다.
 
+Supabase 계정 기능을 사용하려면 `.env.example`을 참고해
+`NEXT_PUBLIC_SUPABASE_URL`과 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를
+설정합니다. Secret 또는 service role 키는 브라우저 빌드에 넣지 않습니다.
+
+## Supabase 구성
+
+- `supabase/migrations/20260723153000_accounts.sql`: 프로필, username
+  디렉터리, 모드별 기록과 RLS 정책
+- `supabase/migrations/20260723162000_lock_profile_and_record_writes.sql`:
+  레벨·랭킹 기록을 브라우저에서 임의 수정하지 못하도록 쓰기 권한 잠금
+- `supabase/functions/username-auth`: username 로그인과 비밀번호 재설정
+- 가입은 username + email + password, 로그인은 username + password
+
 ## 검증
 
 ```bash

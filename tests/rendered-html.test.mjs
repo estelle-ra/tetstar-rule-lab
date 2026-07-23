@@ -52,10 +52,40 @@ test("server-renders the complete game selector", async () => {
 });
 
 test("ships without starter-only assets", async () => {
-  const [packageJson, gameClient] = await Promise.all([
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readFile(new URL("../app/GameClient.tsx", import.meta.url), "utf8"),
-  ]);
+  const [
+    packageJson,
+    gameClient,
+    authGate,
+    migration,
+    writeLockMigration,
+    usernameAuth,
+  ] =
+    await Promise.all([
+      readFile(new URL("../package.json", import.meta.url), "utf8"),
+      readFile(new URL("../app/GameClient.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/AuthGate.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL(
+          "../supabase/migrations/20260723153000_accounts.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../supabase/migrations/20260723162000_lock_profile_and_record_writes.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../supabase/functions/username-auth/index.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ]);
 
   assert.match(packageJson, /"name": "tetstar-rule-lab"/);
   assert.match(packageJson, /"peerjs":/);
@@ -82,7 +112,18 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /온라인 대전은 방장의 설정을 모든 참가자에게 동일하게 적용합니다/);
   assert.match(gameClient, /T-SPIN DOUBLE!/);
   assert.match(gameClient, /tetstar-identity-v1/);
-  assert.match(gameClient, /WELCOME TO TETSTAR/);
+  assert.match(authGate, /WELCOME TO TETSTAR/);
+  assert.match(authGate, /CREATE ACCOUNT/);
+  assert.match(authGate, /SEND RESET LINK/);
+  assert.match(migration, /alter table public\.profiles enable row level security/);
+  assert.match(migration, /is_username_available/);
+  assert.match(writeLockMigration, /revoke update on public\.profiles/);
+  assert.match(
+    writeLockMigration,
+    /revoke insert, update on public\.mode_records/,
+  );
+  assert.match(usernameAuth, /username 또는 비밀번호가 올바르지 않습니다/);
+  assert.doesNotMatch(usernameAuth, /sb_secret_|service_role.*=/i);
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
   );
