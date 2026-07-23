@@ -91,6 +91,9 @@ type RoomPacket =
 
 const WIDTH = 10;
 const HEIGHT = 20;
+const LOCK_DELAY_MS = 350;
+const MAX_LOCK_RESETS = 8;
+const MAX_GROUNDED_MS = 1800;
 const PIECES: PieceName[] = ["I", "J", "L", "O", "S", "T", "Z"];
 
 const SHAPES: Record<PieceName, number[][]> = {
@@ -288,13 +291,17 @@ function GameBoard({
   const [status, setStatus] = useState<Status>("playing");
   const [seconds, setSeconds] = useState(mode === "blitz" ? 120 : 0);
   const [flash, setFlash] = useState("");
+  const [joystickVector, setJoystickVector] = useState({ x: 0, y: 0 });
   const finishSent = useRef(false);
   const snapshotSentAt = useRef(0);
   const repeatHandles = useRef(new Map<string, RepeatHandle>());
   const actionRef = useRef<(action: GameAction) => void>(() => undefined);
   const lockDeadlineRef = useRef<number | null>(null);
+  const groundedLimitRef = useRef<number | null>(null);
   const lockResetCount = useRef(0);
   const lastActionWasRotation = useRef(false);
+  const joystickPointer = useRef<number | null>(null);
+  const joystickDirection = useRef<GameAction | null>(null);
 
   const finish = useCallback(
     (nextStatus: "won" | "lost") => {
@@ -311,6 +318,7 @@ function GameBoard({
     (piece: Piece) => {
       const tSpin = isTSpin(board, piece, lastActionWasRotation.current);
       lockDeadlineRef.current = null;
+      groundedLimitRef.current = null;
       lockResetCount.current = 0;
       lastActionWasRotation.current = false;
       const merged = board.map((row) => [...row]);
@@ -408,12 +416,20 @@ function GameBoard({
     const grounded = collides(board, { ...active, y: active.y + 1 });
     if (!grounded) {
       lockDeadlineRef.current = null;
+      groundedLimitRef.current = null;
       lockResetCount.current = 0;
       return;
     }
     const now = window.performance.now();
-    lockDeadlineRef.current ??= now + 500;
-    const remaining = Math.max(0, lockDeadlineRef.current - now);
+    groundedLimitRef.current ??= now + MAX_GROUNDED_MS;
+    lockDeadlineRef.current ??= Math.min(
+      now + LOCK_DELAY_MS,
+      groundedLimitRef.current,
+    );
+    const remaining = Math.max(
+      0,
+      Math.min(lockDeadlineRef.current, groundedLimitRef.current) - now,
+    );
     const timer = window.setTimeout(() => lockPiece(active), remaining);
     return () => window.clearTimeout(timer);
   }, [active, board, lockPiece, status]);
@@ -456,22 +472,31 @@ function GameBoard({
     };
   }, [garbage, status]);
 
+  const refreshLockDelay = useCallback(() => {
+    if (
+      lockDeadlineRef.current === null ||
+      groundedLimitRef.current === null ||
+      lockResetCount.current >= MAX_LOCK_RESETS
+    ) {
+      return;
+    }
+    lockDeadlineRef.current = Math.min(
+      window.performance.now() + LOCK_DELAY_MS,
+      groundedLimitRef.current,
+    );
+    lockResetCount.current += 1;
+  }, []);
+
   const move = useCallback(
     (dx: number) => {
       const moved = { ...active, x: active.x + dx };
       if (!collides(board, moved)) {
-        if (
-          lockDeadlineRef.current !== null &&
-          lockResetCount.current < 15
-        ) {
-          lockDeadlineRef.current = window.performance.now() + 500;
-          lockResetCount.current += 1;
-        }
+        refreshLockDelay();
         lastActionWasRotation.current = false;
         setActive(moved);
       }
     },
-    [active, board],
+    [active, board, refreshLockDelay],
   );
 
   const rotate = useCallback(
@@ -483,20 +508,14 @@ function GameBoard({
       for (const kick of [0, -1, 1, -2, 2]) {
         const candidate = { ...rotated, x: rotated.x + kick };
         if (!collides(board, candidate)) {
-          if (
-            lockDeadlineRef.current !== null &&
-            lockResetCount.current < 15
-          ) {
-            lockDeadlineRef.current = window.performance.now() + 500;
-            lockResetCount.current += 1;
-          }
+          refreshLockDelay();
           lastActionWasRotation.current = true;
           setActive(candidate);
           return;
         }
       }
     },
-    [active, board],
+    [active, board, refreshLockDelay],
   );
 
   const hardDrop = useCallback(() => {
@@ -513,6 +532,7 @@ function GameBoard({
   const holdPiece = useCallback(() => {
     if (!canHold) return;
     lockDeadlineRef.current = null;
+    groundedLimitRef.current = null;
     lockResetCount.current = 0;
     lastActionWasRotation.current = false;
     if (held) {
@@ -658,10 +678,51 @@ function GameBoard({
     }
   };
 
-  const handleMobileRelease = (
-    event: ReactPointerEvent<HTMLButtonElement>,
-  ) => {
-    stopRepeat(`touch:${event.pointerId}`);
+  const updateJoystick = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (joystickPointer.current !== event.pointerId) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const rawX = event.clientX - (rect.left + rect.width / 2);
+    const rawY = event.clientY - (rect.top + rect.height / 2);
+    const distance = Math.hypot(rawX, rawY);
+    const radius = 29;
+    const scale = distance > radius ? radius / distance : 1;
+    const x = rawX * scale;
+    const y = rawY * scale;
+    setJoystickVector({ x, y });
+
+    let nextDirection: GameAction | null = null;
+    if (distance >= 10) {
+      if (Math.abs(x) > Math.abs(y) * 0.75) {
+        nextDirection = x < 0 ? "left" : "right";
+      } else if (y > 0) {
+        nextDirection = "down";
+      }
+    }
+    if (nextDirection === joystickDirection.current) return;
+    stopRepeat("joystick");
+    joystickDirection.current = nextDirection;
+    if (nextDirection) {
+      startRepeat(
+        "joystick",
+        nextDirection,
+        nextDirection === "down" ? 55 : 85,
+        nextDirection === "down" ? 26 : 32,
+      );
+    }
+  };
+
+  const startJoystick = (event: ReactPointerEvent<HTMLDivElement>) => {
+    joystickPointer.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateJoystick(event);
+  };
+
+  const stopJoystick = () => {
+    joystickPointer.current = null;
+    joystickDirection.current = null;
+    setJoystickVector({ x: 0, y: 0 });
+    stopRepeat("joystick");
   };
 
   const rendered = useMemo(() => {
@@ -787,36 +848,24 @@ function GameBoard({
           <small>HOLD</small>
           ⇧
         </button>
-        <button
-          className="touch-button"
-          aria-label="왼쪽으로 이동"
-          onPointerDown={(event) => handleMobilePress(event, "left", true)}
-          onPointerUp={handleMobileRelease}
-          onPointerCancel={handleMobileRelease}
-          onLostPointerCapture={handleMobileRelease}
+        <div
+          className="touch-joystick"
+          role="group"
+          aria-label="이동 조이스틱"
+          onPointerDown={startJoystick}
+          onPointerMove={updateJoystick}
+          onPointerUp={stopJoystick}
+          onPointerCancel={stopJoystick}
+          onLostPointerCapture={stopJoystick}
         >
-          ←
-        </button>
-        <button
-          className="touch-button"
-          aria-label="아래로 빠르게 이동"
-          onPointerDown={(event) => handleMobilePress(event, "down", true)}
-          onPointerUp={handleMobileRelease}
-          onPointerCancel={handleMobileRelease}
-          onLostPointerCapture={handleMobileRelease}
-        >
-          ↓
-        </button>
-        <button
-          className="touch-button"
-          aria-label="오른쪽으로 이동"
-          onPointerDown={(event) => handleMobilePress(event, "right", true)}
-          onPointerUp={handleMobileRelease}
-          onPointerCancel={handleMobileRelease}
-          onLostPointerCapture={handleMobileRelease}
-        >
-          →
-        </button>
+          <span className="joystick-arrows">← ↓ →</span>
+          <span
+            className="joystick-stick"
+            style={{
+              transform: `translate(${joystickVector.x}px, ${joystickVector.y}px)`,
+            }}
+          />
+        </div>
         <button
           className="touch-button touch-rotate"
           aria-label="블록 회전"

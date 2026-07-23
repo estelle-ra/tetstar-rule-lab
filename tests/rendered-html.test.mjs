@@ -64,8 +64,10 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /gravity: 420/);
   assert.match(gameClient, /hold: "ShiftLeft"/);
   assert.match(gameClient, /occupiedCorners >= 3/);
-  assert.match(gameClient, /lockDeadlineRef\.current = window\.performance\.now\(\) \+ 500/);
-  assert.match(gameClient, /lockResetCount\.current < 15/);
+  assert.match(gameClient, /const LOCK_DELAY_MS = 350/);
+  assert.match(gameClient, /const MAX_LOCK_RESETS = 8/);
+  assert.match(gameClient, /const MAX_GROUNDED_MS = 1800/);
+  assert.match(gameClient, /aria-label="이동 조이스틱"/);
   assert.match(gameClient, /T-SPIN DOUBLE!/);
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
