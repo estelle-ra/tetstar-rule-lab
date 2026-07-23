@@ -57,6 +57,11 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /playersRef\.current\.length >= 8/);
   assert.match(gameClient, /reason: "ROOM_FULL"/);
   assert.match(gameClient, /peer\.connect\(roomPeerId\(code\)/);
+  assert.match(gameClient, /aria-label="모바일 게임 조작"/);
+  assert.match(gameClient, /initialDelay = 105/);
+  assert.match(gameClient, /repeatRate = 38/);
+  assert.match(gameClient, /y: 0,/);
+  assert.match(gameClient, /gravity: 420/);
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
   );

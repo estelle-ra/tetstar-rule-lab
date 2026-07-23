@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { DataConnection, Peer as PeerInstance } from "peerjs";
 
 type PieceName = "I" | "J" | "L" | "O" | "S" | "T" | "Z";
@@ -15,6 +16,18 @@ type RenderCell = Exclude<Cell, null> | "ghost" | "";
 type Board = Cell[][];
 type Status = "playing" | "paused" | "won" | "lost";
 type Screen = "home" | "sprint" | "blitz" | "zen" | "versus";
+type GameAction =
+  | "left"
+  | "right"
+  | "down"
+  | "rotateCW"
+  | "rotateCCW"
+  | "hardDrop"
+  | "hold";
+type RepeatHandle = {
+  delay?: number;
+  interval?: number;
+};
 
 type Piece = {
   type: PieceName;
@@ -119,7 +132,7 @@ const SHAPES: Record<PieceName, number[][]> = {
 };
 
 const DEFAULT_RULES: Rules = {
-  gravity: 700,
+  gravity: 420,
   attack: 1,
   ghost: true,
 };
@@ -189,7 +202,7 @@ function spawn(type: PieceName): Piece {
     type,
     rotation: 0,
     x: type === "O" ? 4 : 3,
-    y: -1,
+    y: 0,
   };
 }
 
@@ -256,6 +269,8 @@ function GameBoard({
   const [flash, setFlash] = useState("");
   const finishSent = useRef(false);
   const snapshotSentAt = useRef(0);
+  const repeatHandles = useRef(new Map<string, RepeatHandle>());
+  const actionRef = useRef<(action: GameAction) => void>(() => undefined);
 
   const finish = useCallback(
     (nextStatus: "won" | "lost") => {
@@ -436,39 +451,141 @@ function GameBoard({
     setCanHold(false);
   }, [active.type, canHold, held, queue]);
 
+  const performAction = useCallback(
+    (action: GameAction) => {
+      if (status !== "playing") return;
+      if (action === "left") move(-1);
+      if (action === "right") move(1);
+      if (action === "down") {
+        setScore((value) => value + 1);
+        stepDown();
+      }
+      if (action === "rotateCW") rotate(1);
+      if (action === "rotateCCW") rotate(-1);
+      if (action === "hardDrop") hardDrop();
+      if (action === "hold") holdPiece();
+    },
+    [hardDrop, holdPiece, move, rotate, status, stepDown],
+  );
+
   useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
+    actionRef.current = performAction;
+  }, [performAction]);
+
+  const stopRepeat = useCallback((token: string) => {
+    const handle = repeatHandles.current.get(token);
+    if (!handle) return;
+    if (handle.delay) window.clearTimeout(handle.delay);
+    if (handle.interval) window.clearInterval(handle.interval);
+    repeatHandles.current.delete(token);
+  }, []);
+
+  const stopAllRepeats = useCallback(() => {
+    for (const token of repeatHandles.current.keys()) stopRepeat(token);
+  }, [stopRepeat]);
+
+  const startRepeat = useCallback(
+    (
+      token: string,
+      action: GameAction,
+      initialDelay = 105,
+      repeatRate = 38,
+    ) => {
+      stopRepeat(token);
+      actionRef.current(action);
+      const handle: RepeatHandle = {};
+      repeatHandles.current.set(token, handle);
+      handle.delay = window.setTimeout(() => {
+        actionRef.current(action);
+        handle.interval = window.setInterval(
+          () => actionRef.current(action),
+          repeatRate,
+        );
+      }, initialDelay);
+    },
+    [stopRepeat],
+  );
+
+  useEffect(() => {
+    const actionForCode = (code: string): GameAction | null => {
+      if (code === controls.left) return "left";
+      if (code === controls.right) return "right";
+      if (code === controls.down) return "down";
+      if (code === controls.rotateCW) return "rotateCW";
+      if (code === controls.rotateCCW) return "rotateCCW";
+      if (code === controls.hardDrop) return "hardDrop";
+      if (code === controls.hold) return "hold";
+      return null;
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
       if (status === "lost" || status === "won") return;
       if (event.code === "Escape") {
+        if (event.repeat) return;
+        stopAllRepeats();
         setStatus((value) => (value === "paused" ? "playing" : "paused"));
         return;
       }
       if (status !== "playing") return;
-      const usedKeys = Object.values(controls);
-      if (!usedKeys.includes(event.code)) return;
+      const action = actionForCode(event.code);
+      if (!action) return;
       event.preventDefault();
-      if (event.code === controls.left) move(-1);
-      if (event.code === controls.right) move(1);
-      if (event.code === controls.down) {
-        setScore((value) => value + 1);
-        stepDown();
+      if (event.repeat) return;
+      if (action === "left" || action === "right" || action === "down") {
+        startRepeat(
+          `key:${event.code}`,
+          action,
+          action === "down" ? 70 : 105,
+          action === "down" ? 32 : 38,
+        );
+      } else {
+        actionRef.current(action);
       }
-      if (event.code === controls.rotateCW) rotate(1);
-      if (event.code === controls.rotateCCW) rotate(-1);
-      if (event.code === controls.hardDrop) hardDrop();
-      if (event.code === controls.hold) holdPiece();
     };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
+    const handleKeyUp = (event: KeyboardEvent) => {
+      stopRepeat(`key:${event.code}`);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", stopAllRepeats);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", stopAllRepeats);
+      stopAllRepeats();
+    };
   }, [
     controls,
-    hardDrop,
-    holdPiece,
-    move,
-    rotate,
+    startRepeat,
     status,
-    stepDown,
+    stopAllRepeats,
+    stopRepeat,
   ]);
+
+  const handleMobilePress = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    action: GameAction,
+    repeat = false,
+  ) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const token = `touch:${event.pointerId}`;
+    if (repeat) {
+      startRepeat(
+        token,
+        action,
+        action === "down" ? 60 : 95,
+        action === "down" ? 28 : 34,
+      );
+    } else {
+      actionRef.current(action);
+    }
+  };
+
+  const handleMobileRelease = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) => {
+    stopRepeat(`touch:${event.pointerId}`);
+  };
 
   const rendered = useMemo(() => {
     const cells: RenderCell[][] = board.map((row) =>
@@ -584,7 +701,67 @@ function GameBoard({
           </div>
         </aside>
       </div>
-      <p className="controls-hint">{controlLabel}</p>
+      <div className="mobile-controls" aria-label="모바일 게임 조작">
+        <button
+          className="touch-button touch-hold"
+          aria-label="블록 홀드"
+          onPointerDown={(event) => handleMobilePress(event, "hold")}
+        >
+          <small>HOLD</small>
+          C
+        </button>
+        <button
+          className="touch-button"
+          aria-label="왼쪽으로 이동"
+          onPointerDown={(event) => handleMobilePress(event, "left", true)}
+          onPointerUp={handleMobileRelease}
+          onPointerCancel={handleMobileRelease}
+          onLostPointerCapture={handleMobileRelease}
+        >
+          ←
+        </button>
+        <button
+          className="touch-button"
+          aria-label="아래로 빠르게 이동"
+          onPointerDown={(event) => handleMobilePress(event, "down", true)}
+          onPointerUp={handleMobileRelease}
+          onPointerCancel={handleMobileRelease}
+          onLostPointerCapture={handleMobileRelease}
+        >
+          ↓
+        </button>
+        <button
+          className="touch-button"
+          aria-label="오른쪽으로 이동"
+          onPointerDown={(event) => handleMobilePress(event, "right", true)}
+          onPointerUp={handleMobileRelease}
+          onPointerCancel={handleMobileRelease}
+          onLostPointerCapture={handleMobileRelease}
+        >
+          →
+        </button>
+        <button
+          className="touch-button touch-rotate"
+          aria-label="블록 회전"
+          onPointerDown={(event) => handleMobilePress(event, "rotateCW")}
+        >
+          ↻
+        </button>
+        <button
+          className="touch-button touch-drop"
+          aria-label="블록 즉시 내리기"
+          onPointerDown={(event) => handleMobilePress(event, "hardDrop")}
+        >
+          <small>DROP</small>
+          ⇣
+        </button>
+      </div>
+      <p className="controls-hint">
+        <span className="desktop-control-label">{controlLabel}</span>
+        <span className="mobile-control-label">
+          버튼을 길게 누르면 즉시 연속 이동합니다.
+        </span>
+      </p>
     </section>
   );
 }
@@ -1424,7 +1601,7 @@ export default function GameClient() {
   const [rules, setRulesState] = useState<Rules>(DEFAULT_RULES);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("tetrix-rules");
+    const saved = window.localStorage.getItem("tetrix-rules-v2");
     if (!saved) return;
     const timer = window.setTimeout(() => {
       try {
@@ -1438,16 +1615,21 @@ export default function GameClient() {
 
   const setRules = (next: Rules) => {
     setRulesState(next);
-    window.localStorage.setItem("tetrix-rules", JSON.stringify(next));
+    window.localStorage.setItem("tetrix-rules-v2", JSON.stringify(next));
   };
 
   const start = (nextScreen: Screen) => {
     setRun((value) => value + 1);
     setScreen(nextScreen);
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    });
   };
 
   return (
-    <main className="app-shell">
+    <main
+      className={`app-shell ${screen === "home" ? "screen-home" : "screen-playing"}`}
+    >
       <header className="topbar">
         <button className="brand" onClick={() => setScreen("home")}>
           <span className="brand-mark">

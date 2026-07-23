@@ -670,8 +670,8 @@ input:focus-visible {
 }
 
 .piece-ghost {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  background: rgba(255, 255, 255, 0.055) !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
 }
 
 .piece-rail {
@@ -784,6 +784,11 @@ input:focus-visible {
   letter-spacing: 0.05em;
   margin: 10px 0 0;
   text-align: center;
+}
+
+.mobile-controls,
+.mobile-control-label {
+  display: none;
 }
 
 .mission-panel {
@@ -1552,14 +1557,32 @@ footer {
     display: none;
   }
 
+  .screen-playing .topbar {
+    display: none;
+  }
+
   .play-screen {
-    padding-left: 7px;
-    padding-right: 7px;
+    min-height: 100dvh;
+    padding: 7px 7px 18px;
   }
 
   .play-toolbar {
-    padding-left: 8px;
-    padding-right: 8px;
+    background: rgba(13, 15, 18, 0.96);
+    grid-template-columns: 1fr 1fr;
+    margin-bottom: 9px;
+    padding: 3px 8px 9px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+
+  .play-toolbar > div {
+    display: none;
+  }
+
+  .play-toolbar .restart-button,
+  .play-toolbar .online-mode-label {
+    justify-self: end;
   }
 
   .solo-wrap {
@@ -1610,27 +1633,159 @@ footer {
     grid-template-columns: 1fr;
   }
 
+  .game-unit {
+    width: 100%;
+  }
+
   .game-rig {
-    --cell: clamp(17px, 5vw, 24px);
-    grid-template-columns: 68px auto 68px;
+    --cell: clamp(
+      20px,
+      min(8.4vw, calc((100dvh - 255px) / 20)),
+      32px
+    );
+    display: grid;
+    gap: 7px 9px;
+    grid-template-areas:
+      "hold next"
+      "board board";
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    justify-items: center;
+    width: 100%;
+  }
+
+  .game-rig > .piece-rail:first-child {
+    grid-area: hold;
+  }
+
+  .game-rig > .board-shell {
+    grid-area: board;
+  }
+
+  .game-rig > .next-rail {
+    grid-area: next;
   }
 
   .piece-rail {
-    padding-left: 5px;
-    padding-right: 5px;
+    align-items: center;
+    display: grid;
+    gap: 5px;
+    grid-template-columns: auto 1fr 1fr;
+    min-height: 54px;
+    padding: 5px 7px;
+    width: 100%;
+  }
+
+  .piece-rail > span {
+    display: none;
+  }
+
+  .piece-rail .rail-stat {
+    border-left: 1px solid #282c32;
+    border-top: 0;
+    margin: 0;
+    min-width: 0;
+    padding: 0 0 0 7px;
+  }
+
+  .next-rail {
+    grid-template-columns: auto 1fr;
+    padding-bottom: 5px;
+  }
+
+  .next-rail .mini-grid:nth-of-type(n + 2) {
+    display: none;
   }
 
   .mini-grid {
-    grid-template-columns: repeat(4, 9px);
-    grid-template-rows: repeat(2, 9px);
+    grid-template-columns: repeat(4, 10px);
+    grid-template-rows: repeat(2, 10px);
+    margin: 0;
   }
 
   .player-line {
-    padding: 0 5px;
+    margin: 0 auto 7px;
+    max-width: min(86vw, 340px);
+    padding: 0 2px;
   }
 
   .mission-panel {
-    margin: 40px 20px 90px;
+    display: none;
+  }
+
+  .mobile-controls {
+    background: rgba(12, 14, 17, 0.94);
+    border: 1px solid #30353d;
+    bottom: 6px;
+    display: grid;
+    gap: 5px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    margin: 9px auto 0;
+    max-width: 510px;
+    padding: 6px;
+    position: sticky;
+    touch-action: none;
+    width: calc(100% - 8px);
+    z-index: 18;
+  }
+
+  .touch-button {
+    align-items: center;
+    background: #1a1e24;
+    border: 1px solid #3a414b;
+    box-shadow: 0 3px 0 #07080a;
+    color: var(--paper);
+    display: flex;
+    flex-direction: column;
+    font: 700 24px/1 monospace;
+    justify-content: center;
+    min-height: 58px;
+    padding: 5px 2px;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .touch-button small {
+    color: #727b87;
+    font: 6px monospace;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+  }
+
+  .touch-button:active {
+    background: #2b323b;
+    border-color: var(--cyan);
+    box-shadow: 0 1px 0 #07080a;
+    transform: translateY(2px);
+  }
+
+  .touch-hold {
+    color: var(--orange);
+  }
+
+  .touch-rotate {
+    color: var(--cyan);
+  }
+
+  .touch-drop {
+    color: var(--lime);
+  }
+
+  .desktop-control-label {
+    display: none;
+  }
+
+  .mobile-control-label {
+    display: inline;
+  }
+
+  .controls-hint {
+    margin-top: 6px;
+  }
+
+  .screen-playing #rule-lab,
+  .screen-playing footer {
+    display: none;
   }
 
   #rule-lab {
@@ -1668,8 +1823,11 @@ footer {
   }
 
   .game-rig {
-    --cell: 5vw;
-    grid-template-columns: 54px auto 54px;
+    --cell: clamp(
+      19px,
+      min(8.5vw, calc((100dvh - 250px) / 20)),
+      31px
+    );
   }
 
   .rail-stat strong {
