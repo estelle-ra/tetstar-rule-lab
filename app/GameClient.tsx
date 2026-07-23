@@ -144,7 +144,7 @@ const SINGLE_CONTROLS: Controls = {
   rotateCW: "ArrowUp",
   rotateCCW: "KeyZ",
   hardDrop: "Space",
-  hold: "KeyC",
+  hold: "ShiftLeft",
 };
 
 function emptyBoard(): Board {
@@ -180,6 +180,27 @@ function collides(board: Board, piece: Piece): boolean {
       y >= HEIGHT ||
       (y >= 0 && board[y][x] !== null),
   );
+}
+
+function isTSpin(board: Board, piece: Piece, lastActionWasRotation: boolean) {
+  if (piece.type !== "T" || !lastActionWasRotation) return false;
+  const centerX = piece.x + 1;
+  const centerY = piece.y + 1;
+  const corners = [
+    [centerX - 1, centerY - 1],
+    [centerX + 1, centerY - 1],
+    [centerX - 1, centerY + 1],
+    [centerX + 1, centerY + 1],
+  ];
+  const occupiedCorners = corners.filter(
+    ([x, y]) =>
+      x < 0 ||
+      x >= WIDTH ||
+      y < 0 ||
+      y >= HEIGHT ||
+      board[y][x] !== null,
+  ).length;
+  return occupiedCorners >= 3;
 }
 
 function shuffledBag(): PieceName[] {
@@ -271,6 +292,9 @@ function GameBoard({
   const snapshotSentAt = useRef(0);
   const repeatHandles = useRef(new Map<string, RepeatHandle>());
   const actionRef = useRef<(action: GameAction) => void>(() => undefined);
+  const lockDeadlineRef = useRef<number | null>(null);
+  const lockResetCount = useRef(0);
+  const lastActionWasRotation = useRef(false);
 
   const finish = useCallback(
     (nextStatus: "won" | "lost") => {
@@ -285,6 +309,10 @@ function GameBoard({
 
   const lockPiece = useCallback(
     (piece: Piece) => {
+      const tSpin = isTSpin(board, piece, lastActionWasRotation.current);
+      lockDeadlineRef.current = null;
+      lockResetCount.current = 0;
+      lastActionWasRotation.current = false;
       const merged = board.map((row) => [...row]);
       let overflow = false;
       pieceCells(piece).forEach(([x, y]) => {
@@ -306,6 +334,10 @@ function GameBoard({
       const nextLines = lines + cleared;
       const nextCombo = cleared ? combo + 1 : -1;
       const baseScores = [0, 100, 300, 500, 800];
+      const tSpinScores = [400, 800, 1200, 1600];
+      const clearScore = tSpin
+        ? (tSpinScores[cleared] ?? 1600)
+        : (baseScores[cleared] ?? 1200);
 
       setBoard(cleaned);
       setActive(nextPiece);
@@ -316,19 +348,28 @@ function GameBoard({
       setScore(
         (value) =>
           value +
-          (baseScores[cleared] ?? 1200) * (1 + Math.floor(nextLines / 10)) +
+          clearScore * (1 + Math.floor(nextLines / 10)) +
           (cleared ? Math.max(0, nextCombo) * 50 : 0),
       );
 
-      if (cleared) {
-        const attackBase = [0, 0, 1, 2, 4][cleared] ?? 4;
+      if (cleared || tSpin) {
+        const attackBase = tSpin
+          ? ([0, 2, 4, 6][cleared] ?? 6)
+          : ([0, 0, 1, 2, 4][cleared] ?? 4);
         const attack = Math.max(
           0,
           Math.round((attackBase + Math.max(0, nextCombo - 1)) * rules.attack),
         );
         if (attack > 0) onAttack?.(attack);
-        setFlash(cleared === 4 ? "QUAD!" : `${cleared} LINE`);
-        window.setTimeout(() => setFlash(""), 620);
+        const tSpinNames = ["T-SPIN!", "T-SPIN SINGLE!", "T-SPIN DOUBLE!", "T-SPIN TRIPLE!"];
+        setFlash(
+          tSpin
+            ? (tSpinNames[cleared] ?? "T-SPIN!")
+            : cleared === 4
+              ? "QUAD!"
+              : `${cleared} LINE`,
+        );
+        window.setTimeout(() => setFlash(""), tSpin ? 900 : 620);
       }
 
       if (mode === "sprint" && nextLines >= 40) {
@@ -352,9 +393,8 @@ function GameBoard({
   const stepDown = useCallback(() => {
     if (status !== "playing") return;
     const moved = { ...active, y: active.y + 1 };
-    if (collides(board, moved)) lockPiece(active);
-    else setActive(moved);
-  }, [active, board, lockPiece, status]);
+    if (!collides(board, moved)) setActive(moved);
+  }, [active, board, status]);
 
   useEffect(() => {
     if (status !== "playing") return;
@@ -362,6 +402,21 @@ function GameBoard({
     const timer = window.setInterval(stepDown, gravity);
     return () => window.clearInterval(timer);
   }, [lines, rules.gravity, status, stepDown]);
+
+  useEffect(() => {
+    if (status !== "playing") return;
+    const grounded = collides(board, { ...active, y: active.y + 1 });
+    if (!grounded) {
+      lockDeadlineRef.current = null;
+      lockResetCount.current = 0;
+      return;
+    }
+    const now = window.performance.now();
+    lockDeadlineRef.current ??= now + 500;
+    const remaining = Math.max(0, lockDeadlineRef.current - now);
+    const timer = window.setTimeout(() => lockPiece(active), remaining);
+    return () => window.clearTimeout(timer);
+  }, [active, board, lockPiece, status]);
 
   useEffect(() => {
     if (status !== "playing") return;
@@ -404,7 +459,17 @@ function GameBoard({
   const move = useCallback(
     (dx: number) => {
       const moved = { ...active, x: active.x + dx };
-      if (!collides(board, moved)) setActive(moved);
+      if (!collides(board, moved)) {
+        if (
+          lockDeadlineRef.current !== null &&
+          lockResetCount.current < 15
+        ) {
+          lockDeadlineRef.current = window.performance.now() + 500;
+          lockResetCount.current += 1;
+        }
+        lastActionWasRotation.current = false;
+        setActive(moved);
+      }
     },
     [active, board],
   );
@@ -418,6 +483,14 @@ function GameBoard({
       for (const kick of [0, -1, 1, -2, 2]) {
         const candidate = { ...rotated, x: rotated.x + kick };
         if (!collides(board, candidate)) {
+          if (
+            lockDeadlineRef.current !== null &&
+            lockResetCount.current < 15
+          ) {
+            lockDeadlineRef.current = window.performance.now() + 500;
+            lockResetCount.current += 1;
+          }
+          lastActionWasRotation.current = true;
           setActive(candidate);
           return;
         }
@@ -439,6 +512,9 @@ function GameBoard({
 
   const holdPiece = useCallback(() => {
     if (!canHold) return;
+    lockDeadlineRef.current = null;
+    lockResetCount.current = 0;
+    lastActionWasRotation.current = false;
     if (held) {
       setHeld(active.type);
       setActive(spawn(held));
@@ -514,6 +590,7 @@ function GameBoard({
       if (code === controls.rotateCW) return "rotateCW";
       if (code === controls.rotateCCW) return "rotateCCW";
       if (code === controls.hardDrop) return "hardDrop";
+      if (controls.hold === "ShiftLeft" && code === "ShiftRight") return "hold";
       if (code === controls.hold) return "hold";
       return null;
     };
@@ -626,7 +703,7 @@ function GameBoard({
     return () => window.clearTimeout(timer);
   }, [lines, onSnapshot, rendered, score, status]);
 
-  const controlLabel = "←/→ 이동 · ↑/Z 회전 · Space 드롭 · C 홀드";
+  const controlLabel = "←/→ 이동 · ↑/Z 회전 · Space 드롭 · Shift 홀드";
 
   return (
     <section className={`game-unit ${compact ? "game-unit-compact" : ""}`}>
@@ -708,7 +785,7 @@ function GameBoard({
           onPointerDown={(event) => handleMobilePress(event, "hold")}
         >
           <small>HOLD</small>
-          C
+          ⇧
         </button>
         <button
           className="touch-button"
@@ -1618,11 +1695,41 @@ export default function GameClient() {
     window.localStorage.setItem("tetrix-rules-v2", JSON.stringify(next));
   };
 
+  const goHome = () => {
+    setScreen("home");
+    const fullscreenDocument = document as Document & {
+      webkitExitFullscreen?: () => void;
+    };
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => undefined);
+    } else {
+      fullscreenDocument.webkitExitFullscreen?.();
+    }
+  };
+
   const start = (nextScreen: Screen) => {
+    if (window.matchMedia("(max-width: 760px)").matches) {
+      const fullscreenRoot = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void> | void;
+      };
+      const requestFullscreen =
+        fullscreenRoot.requestFullscreen ??
+        fullscreenRoot.webkitRequestFullscreen;
+      try {
+        const result = requestFullscreen?.call(fullscreenRoot);
+        result?.catch?.(() => undefined);
+      } catch {
+        // Fullscreen is optional; the CSS game frame still fits the viewport.
+      }
+    }
     setRun((value) => value + 1);
     setScreen(nextScreen);
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: "auto" });
+      document.querySelector(".play-screen")?.scrollIntoView({
+        block: "start",
+        behavior: "auto",
+      });
     });
   };
 
@@ -1631,7 +1738,7 @@ export default function GameClient() {
       className={`app-shell ${screen === "home" ? "screen-home" : "screen-playing"}`}
     >
       <header className="topbar">
-        <button className="brand" onClick={() => setScreen("home")}>
+        <button className="brand" onClick={goHome}>
           <span className="brand-mark">
             <i />
             <i />
@@ -1646,7 +1753,7 @@ export default function GameClient() {
         <nav aria-label="주요 메뉴">
           <button
             className={screen === "home" ? "nav-active" : ""}
-            onClick={() => setScreen("home")}
+            onClick={goHome}
           >
             PLAY
           </button>
@@ -1732,7 +1839,7 @@ export default function GameClient() {
       ) : (
         <section className="play-screen">
           <div className="play-toolbar">
-            <button className="back-button" onClick={() => setScreen("home")}>
+            <button className="back-button" onClick={goHome}>
               ← MODE SELECT
             </button>
             <div>
@@ -1795,7 +1902,7 @@ export default function GameClient() {
                     <kbd>SPACE</kbd> 하드드롭
                   </span>
                   <span>
-                    <kbd>C</kbd> 홀드
+                    <kbd>SHIFT</kbd> 홀드
                   </span>
                   <span>
                     <kbd>ESC</kbd> 일시정지

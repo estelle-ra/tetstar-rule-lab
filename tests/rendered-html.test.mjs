@@ -62,6 +62,11 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /repeatRate = 38/);
   assert.match(gameClient, /y: 0,/);
   assert.match(gameClient, /gravity: 420/);
+  assert.match(gameClient, /hold: "ShiftLeft"/);
+  assert.match(gameClient, /occupiedCorners >= 3/);
+  assert.match(gameClient, /lockDeadlineRef\.current = window\.performance\.now\(\) \+ 500/);
+  assert.match(gameClient, /lockResetCount\.current < 15/);
+  assert.match(gameClient, /T-SPIN DOUBLE!/);
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
   );
