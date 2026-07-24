@@ -12,6 +12,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import type { DataConnection, Peer as PeerInstance } from "peerjs";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import AuthGate, { type PlayerIdentity } from "./AuthGate";
 import { supabase } from "./lib/supabase";
 
@@ -98,6 +99,7 @@ type ChatMessage = {
 };
 
 type RoomPacket =
+  | { type: "join-request"; name: string }
   | {
       type: "welcome";
       selfId: string;
@@ -121,6 +123,13 @@ type RoomPacket =
       players: RoomPlayer[];
     }
   | { type: "full"; reason: "ROOM_FULL" | "MATCH_STARTED" };
+
+type RealtimeEnvelope = {
+  senderId: string;
+  targetId?: string;
+  exceptId?: string;
+  packet: RoomPacket;
+};
 
 const WIDTH = 10;
 const HEIGHT = 20;
@@ -1186,6 +1195,8 @@ function OnlineParty({
   const [manualInviteJoin, setManualInviteJoin] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("");
   const peerRef = useRef<PeerInstance | null>(null);
+  const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
+  const realtimeHostIdRef = useRef("");
   const hostConnectionRef = useRef<DataConnection | null>(null);
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
   const playersRef = useRef<RoomPlayer[]>([]);
@@ -1251,7 +1262,26 @@ function OnlineParty({
     createdAt: Date.now(),
   });
 
+  const sendRealtimePacket = (
+    packet: RoomPacket,
+    targetId?: string,
+    exceptId?: string,
+  ) => {
+    const channel = realtimeChannelRef.current;
+    const senderId = localIdRef.current;
+    if (!channel || !senderId) return;
+    void channel.send({
+      type: "broadcast",
+      event: "room",
+      payload: { senderId, targetId, exceptId, packet },
+    });
+  };
+
   const broadcast = (packet: RoomPacket, exceptId?: string) => {
+    if (realtimeChannelRef.current) {
+      sendRealtimePacket(packet, undefined, exceptId);
+      return;
+    }
     connectionsRef.current.forEach((connection, peerId) => {
       if (peerId === exceptId || !connection.open) return;
       try {
@@ -1346,6 +1376,8 @@ function OnlineParty({
     };
     if (target.id === localIdRef.current) {
       setGarbageSignal({ id: packet.id, amount });
+    } else if (realtimeChannelRef.current) {
+      sendRealtimePacket(packet, target.id);
     } else {
       const connection = connectionsRef.current.get(target.id);
       if (connection?.open) connection.send(packet);
@@ -1353,6 +1385,70 @@ function OnlineParty({
   };
 
   const handleHostPacket = (senderId: string, packet: RoomPacket) => {
+    if (packet.type === "join-request") {
+      if (playersRef.current.some((player) => player.id === senderId)) {
+        sendRealtimePacket(
+          {
+            type: "welcome",
+            selfId: senderId,
+            players: playersRef.current,
+            started: phaseRef.current === "playing",
+            rules: rulesRef.current,
+            messages: chatMessagesRef.current,
+          },
+          senderId,
+        );
+        return;
+      }
+      if (playersRef.current.length >= 8) {
+        sendRealtimePacket(
+          { type: "full", reason: "ROOM_FULL" },
+          senderId,
+        );
+        return;
+      }
+      if (phaseRef.current !== "lobby") {
+        sendRealtimePacket(
+          { type: "full", reason: "MATCH_STARTED" },
+          senderId,
+        );
+        return;
+      }
+      const occupied = new Set(playersRef.current.map((player) => player.slot));
+      const slot = Array.from({ length: 8 }, (_, index) => index).find(
+        (index) => !occupied.has(index),
+      );
+      if (slot === undefined) return;
+      const next = [
+        ...playersRef.current,
+        {
+          id: senderId,
+          name: cleanPlayerName(packet.name),
+          slot,
+          alive: true,
+          connected: true,
+        },
+      ].sort((a, b) => a.slot - b.slot);
+      replacePlayers(next);
+      sendRealtimePacket(
+        {
+          type: "welcome",
+          selfId: senderId,
+          players: next,
+          started: false,
+          rules: rulesRef.current,
+          messages: chatMessagesRef.current,
+        },
+        senderId,
+      );
+      broadcast({
+        type: "roster",
+        players: next,
+        started: false,
+        rules: rulesRef.current,
+      });
+      return;
+    }
     if (packet.type === "chat-submit") {
       const sender = playersRef.current.find((player) => player.id === senderId);
       const text = cleanChatText(packet.text);
@@ -1468,7 +1564,7 @@ function OnlineParty({
     return "실시간 연결에 실패했습니다. 네트워크를 확인해 주세요.";
   };
 
-  const createRoom = async () => {
+  const createPeerRoom = async () => {
     clearConnectionTimeout();
     setRoomError("");
     setConnectionStatus("방을 준비하고 있습니다.");
@@ -1576,7 +1672,7 @@ function OnlineParty({
     }
   };
 
-  const joinRoom = async (
+  const joinPeerRoom = async (
     requestedCode = joinCode,
     requestedName = playerName,
     retryCount = 0,
@@ -1618,7 +1714,7 @@ function OnlineParty({
         );
         window.setTimeout(() => {
           if (connectionAttemptRef.current !== attempt) return;
-          void joinRoom(code, requestedName, retryCount + 1);
+          void joinPeerRoom(code, requestedName, retryCount + 1);
         }, 450);
         return;
       }
@@ -1676,6 +1772,186 @@ function OnlineParty({
     }
   };
 
+  const receiveRealtimeMessage = (message: { payload?: unknown }) => {
+    const envelope = message.payload as RealtimeEnvelope | undefined;
+    const localId = localIdRef.current;
+    if (
+      !envelope?.senderId ||
+      !envelope.packet ||
+      envelope.senderId === localId ||
+      envelope.exceptId === localId ||
+      (envelope.targetId && envelope.targetId !== localId)
+    ) {
+      return;
+    }
+    if (roleRef.current === "host") {
+      handleHostPacket(envelope.senderId, envelope.packet);
+      return;
+    }
+    if (envelope.packet.type === "welcome") {
+      realtimeHostIdRef.current = envelope.senderId;
+    }
+    if (
+      realtimeHostIdRef.current &&
+      envelope.senderId !== realtimeHostIdRef.current
+    ) {
+      return;
+    }
+    handleGuestPacket(envelope.packet);
+  };
+
+  const removeRealtimeChannel = () => {
+    const channel = realtimeChannelRef.current;
+    realtimeChannelRef.current = null;
+    realtimeHostIdRef.current = "";
+    if (channel && supabase) void supabase.removeChannel(channel);
+  };
+
+  const failRealtimeConnection = (message: string, attempt: number) => {
+    if (connectionAttemptRef.current !== attempt) return;
+    clearConnectionTimeout();
+    connectionAttemptRef.current += 1;
+    removeRealtimeChannel();
+    setConnectionStatus("");
+    setRoomError(message);
+    setPhase("entry");
+  };
+
+  const createRealtimeRoom = async () => {
+    if (!supabase) return createPeerRoom();
+    clearConnectionTimeout();
+    removeRealtimeChannel();
+    setRoomError("");
+    setConnectionStatus("Supabase 실시간 방을 준비하고 있습니다.");
+    setPhase("connecting");
+    setRole("host");
+    roleRef.current = "host";
+    const code = generateRoomCode();
+    const localId = crypto.randomUUID();
+    const attempt = connectionAttemptRef.current + 1;
+    connectionAttemptRef.current = attempt;
+    localIdRef.current = localId;
+    setLocalId(localId);
+    setRoomCode(code);
+    const channel = supabase.channel(`tetstar-room-${code.toLowerCase()}`, {
+      config: {
+        broadcast: { ack: true },
+        presence: { key: localId },
+      },
+    });
+    realtimeChannelRef.current = channel;
+    channel
+      .on("broadcast", { event: "room" }, receiveRealtimeMessage)
+      .on("presence", { event: "leave" }, ({ key }) => {
+        if (roleRef.current === "host") handlePeerDeparture(key);
+      })
+      .subscribe((status) => {
+        if (connectionAttemptRef.current !== attempt) return;
+        if (status === "SUBSCRIBED") {
+          clearConnectionTimeout();
+          const host: RoomPlayer = {
+            id: localId,
+            name: cleanPlayerName(playerName),
+            slot: 0,
+            alive: true,
+            connected: true,
+          };
+          replacePlayers([host]);
+          setConnectionStatus("");
+          setPhase("lobby");
+          void channel.track({
+            playerId: localId,
+            name: host.name,
+            role: "host",
+          });
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          failRealtimeConnection(
+            "실시간 방을 만들 수 없습니다. 잠시 후 다시 시도해 주세요.",
+            attempt,
+          );
+        }
+      });
+    connectionTimeoutRef.current = window.setTimeout(() => {
+      failRealtimeConnection(
+        "실시간 방 생성이 지연되고 있습니다. 네트워크를 확인해 주세요.",
+        attempt,
+      );
+    }, 9000);
+  };
+
+  const joinRealtimeRoom = async (
+    requestedCode = joinCode,
+    requestedName = playerName,
+  ) => {
+    if (!supabase) return joinPeerRoom(requestedCode, requestedName);
+    const code = requestedCode
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6);
+    if (code.length !== 6) {
+      setRoomError("6자리 방 코드를 입력해 주세요.");
+      return;
+    }
+    clearConnectionTimeout();
+    removeRealtimeChannel();
+    setRoomError("");
+    setConnectionStatus("Supabase 실시간 방에 연결하고 있습니다.");
+    setRoomCode(code);
+    setRole("guest");
+    roleRef.current = "guest";
+    setPhase("connecting");
+    const localId = crypto.randomUUID();
+    const attempt = connectionAttemptRef.current + 1;
+    connectionAttemptRef.current = attempt;
+    localIdRef.current = localId;
+    setLocalId(localId);
+    const name = cleanPlayerName(requestedName);
+    const channel = supabase.channel(`tetstar-room-${code.toLowerCase()}`, {
+      config: {
+        broadcast: { ack: true },
+        presence: { key: localId },
+      },
+    });
+    realtimeChannelRef.current = channel;
+    channel
+      .on("broadcast", { event: "room" }, receiveRealtimeMessage)
+      .on("presence", { event: "leave" }, ({ key }) => {
+        if (key !== realtimeHostIdRef.current) return;
+        failRealtimeConnection(
+          "호스트가 방을 나갔습니다. 새 초대 링크를 받아 주세요.",
+          attempt,
+        );
+      })
+      .subscribe((status) => {
+        if (connectionAttemptRef.current !== attempt) return;
+        if (status === "SUBSCRIBED") {
+          setConnectionStatus("호스트의 입장 승인을 기다리고 있습니다.");
+          void channel
+            .track({ playerId: localId, name, role: "guest" })
+            .then(() => sendRealtimePacket({ type: "join-request", name }));
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          failRealtimeConnection(
+            "실시간 방에 연결할 수 없습니다. 네트워크를 확인해 주세요.",
+            attempt,
+          );
+        }
+      });
+    connectionTimeoutRef.current = window.setTimeout(() => {
+      failRealtimeConnection(
+        "방을 찾을 수 없습니다. 호스트가 대기실을 열어 둔 상태인지 확인해 주세요.",
+        attempt,
+      );
+    }, 9000);
+  };
+
+  const createRoom = () => void createRealtimeRoom();
+  const joinRoom = (
+    requestedCode = joinCode,
+    requestedName = playerName,
+  ) => void joinRealtimeRoom(requestedCode, requestedName);
+
   useEffect(() => {
     const code = initialRoomCode
       .toUpperCase()
@@ -1706,6 +1982,7 @@ function OnlineParty({
       .filter(
         (player) =>
           player.id === localIdRef.current ||
+          Boolean(realtimeChannelRef.current) ||
           connectionsRef.current.has(player.id),
       )
       .map((player) => ({
@@ -1738,7 +2015,7 @@ function OnlineParty({
     });
   };
 
-  const shareSnapshot = useCallback((snapshot: GameSnapshot) => {
+  const shareSnapshot = (snapshot: GameSnapshot) => {
     const id = localIdRef.current;
     if (!id) return;
     const next = playersRef.current.map((player) =>
@@ -1747,23 +2024,23 @@ function OnlineParty({
     playersRef.current = next;
     setPlayers(next);
     if (roleRef.current === "host") {
-      connectionsRef.current.forEach((connection) => {
-        if (connection.open) {
-          connection.send({
-            type: "snapshot",
-            playerId: id,
-            snapshot,
-          } satisfies RoomPacket);
-        }
-      });
+      broadcast({
+        type: "snapshot",
+        playerId: id,
+        snapshot,
+      } satisfies RoomPacket);
+    } else if (realtimeChannelRef.current) {
+      sendRealtimePacket({ type: "snapshot", snapshot });
     } else if (hostConnectionRef.current?.open) {
       hostConnectionRef.current.send({ type: "snapshot", snapshot } satisfies RoomPacket);
     }
-  }, []);
+  };
 
   const sendAttack = (amount: number) => {
     if (roleRef.current === "host") {
       routeAttack(localIdRef.current, amount);
+    } else if (realtimeChannelRef.current) {
+      sendRealtimePacket({ type: "attack", amount });
     } else if (hostConnectionRef.current?.open) {
       hostConnectionRef.current.send({ type: "attack", amount } satisfies RoomPacket);
     }
@@ -1773,6 +2050,8 @@ function OnlineParty({
     if (status !== "lost") return;
     if (roleRef.current === "host") {
       eliminatePlayer(localIdRef.current);
+    } else if (realtimeChannelRef.current) {
+      sendRealtimePacket({ type: "finish", status: "lost" });
     } else if (hostConnectionRef.current?.open) {
       hostConnectionRef.current.send({
         type: "finish",
@@ -1792,6 +2071,8 @@ function OnlineParty({
       const message = createChatMessage(sender.id, sender.name, text);
       appendChat(message);
       broadcast({ type: "chat", message });
+    } else if (realtimeChannelRef.current) {
+      sendRealtimePacket({ type: "chat-submit", text });
     } else if (hostConnectionRef.current?.open) {
       hostConnectionRef.current.send({
         type: "chat-submit",
@@ -1818,6 +2099,7 @@ function OnlineParty({
   const leaveRoom = () => {
     clearConnectionTimeout();
     connectionAttemptRef.current += 1;
+    removeRealtimeChannel();
     connectionsRef.current.forEach((connection) => connection.close());
     connectionsRef.current.clear();
     hostConnectionRef.current?.close();
@@ -1843,6 +2125,7 @@ function OnlineParty({
   useEffect(
     () => () => {
       clearConnectionTimeout();
+      removeRealtimeChannel();
       connectionsRef.current.forEach((connection) => connection.close());
       hostConnectionRef.current?.close();
       peerRef.current?.destroy();
@@ -1911,7 +2194,7 @@ function OnlineParty({
           <h2>각자의 기기에서 접속하세요.</h2>
           <p>
             한 명이 방을 만들고, 나머지 참가자는 6자리 코드로 접속합니다.
-            게임 데이터는 참가자 기기끼리 직접 전송됩니다.
+            게임 데이터는 Supabase 실시간 채널로 전달됩니다.
           </p>
         </div>
         <label className="online-name-field">
@@ -1967,8 +2250,8 @@ function OnlineParty({
         </div>
         {roomError && <p className="room-error">{roomError}</p>}
         <p className="online-note">
-          인터넷 연결이 필요합니다. 회사망·일부 모바일망에서는 WebRTC 연결이
-          제한될 수 있습니다.
+          인터넷 연결이 필요합니다. 방 통신은 Supabase Realtime을 통해
+          각 기기에 전달됩니다.
         </p>
       </section>
     );
@@ -2595,7 +2878,7 @@ export default function GameClient() {
           </button>
           <div className="server-status">
             <i />
-            P2P READY
+            REALTIME READY
           </div>
         </div>
       </header>
@@ -2652,7 +2935,7 @@ export default function GameClient() {
                     code="8P"
                     title="MULTIPLAYER"
                     description="초대 링크나 방 코드로 각자의 기기에서 실시간 대전"
-                    meta="2–8 PLAYERS / P2P"
+                    meta="2–8 PLAYERS / REALTIME"
                     onClick={() => start("versus")}
                   />
                 </div>
@@ -2828,7 +3111,7 @@ export default function GameClient() {
 
       <footer>
         <span>ORIGINAL STACKER PROTOTYPE · NOT AFFILIATED WITH TETR.IO</span>
-        <span>2–8 DEVICES · WEBRTC P2P</span>
+        <span>2–8 DEVICES · SUPABASE REALTIME</span>
       </footer>
     </main>
   );

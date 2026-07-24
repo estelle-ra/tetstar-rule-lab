@@ -141,6 +141,10 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /retryCount < 1/);
   assert.match(gameClient, /자동으로 한 번 더 시도/);
   assert.match(gameClient, /if \(connection\.open\) registerConnection\(\)/);
+  assert.match(gameClient, /tetstar-room-\$\{code\.toLowerCase\(\)\}/);
+  assert.match(gameClient, /type: "join-request"/);
+  assert.match(gameClient, /REALTIME READY/);
+  assert.match(gameClient, /SUPABASE REALTIME/);
   assert.doesNotMatch(gameClient, /online-mode-label/);
   assert.match(gameClient, /GAME_THEMES/);
   assert.match(gameClient, /themes\/\$\{gameTheme\}\.webp/);
