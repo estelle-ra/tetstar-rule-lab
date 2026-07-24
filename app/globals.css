@@ -1142,6 +1142,12 @@ kbd {
   letter-spacing: 0.16em;
 }
 
+.invite-connection-status {
+  color: #9aa3af;
+  font: 600 13px/1.6 Pretendard, sans-serif;
+  margin: 16px 0 0;
+}
+
 .invite-retry,
 .invite-manual {
   cursor: pointer;

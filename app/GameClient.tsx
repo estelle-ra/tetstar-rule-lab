@@ -1184,6 +1184,7 @@ function OnlineParty({
   const [chatText, setChatText] = useState("");
   const [inviteStatus, setInviteStatus] = useState("COPY INVITE LINK");
   const [manualInviteJoin, setManualInviteJoin] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState("");
   const peerRef = useRef<PeerInstance | null>(null);
   const hostConnectionRef = useRef<DataConnection | null>(null);
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
@@ -1195,6 +1196,7 @@ function OnlineParty({
   const chatMessagesRef = useRef<ChatMessage[]>([]);
   const autoJoinAttemptedRef = useRef(false);
   const connectionAttemptRef = useRef(0);
+  const connectionTimeoutRef = useRef<number | null>(null);
   const activeMatchIdRef = useRef(0);
   const resultMatchIdRef = useRef(0);
   const targetCursor = useRef(0);
@@ -1217,6 +1219,13 @@ function OnlineParty({
   const setPhase = (next: typeof phase) => {
     phaseRef.current = next;
     setPhaseState(next);
+  };
+
+  const clearConnectionTimeout = () => {
+    if (connectionTimeoutRef.current !== null) {
+      window.clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
+    }
   };
 
   const replacePlayers = (next: RoomPlayer[]) => {
@@ -1390,7 +1399,10 @@ function OnlineParty({
   };
 
   const acceptConnection = (connection: DataConnection) => {
-    connection.on("open", () => {
+    let accepted = false;
+    const registerConnection = () => {
+      if (accepted) return;
+      accepted = true;
       if (playersRef.current.length >= 8) {
         connection.send({ type: "full", reason: "ROOM_FULL" } satisfies RoomPacket);
         connection.close();
@@ -1437,7 +1449,9 @@ function OnlineParty({
         started: false,
         rules: rulesRef.current,
       });
-    });
+    };
+    connection.on("open", registerConnection);
+    if (connection.open) registerConnection();
     connection.on("data", (data) =>
       handleHostPacket(connection.peer, data as RoomPacket),
     );
@@ -1455,7 +1469,9 @@ function OnlineParty({
   };
 
   const createRoom = async () => {
+    clearConnectionTimeout();
     setRoomError("");
+    setConnectionStatus("방을 준비하고 있습니다.");
     setPhase("connecting");
     setRole("host");
     roleRef.current = "host";
@@ -1465,7 +1481,21 @@ function OnlineParty({
       const { Peer } = await import("peerjs");
       const peer = new Peer(roomPeerId(code), { debug: 0 });
       peerRef.current = peer;
+      connectionTimeoutRef.current = window.setTimeout(() => {
+        if (phaseRef.current !== "connecting" || roleRef.current !== "host") {
+          return;
+        }
+        peer.destroy();
+        peerRef.current = null;
+        setConnectionStatus("");
+        setRoomError(
+          "방 생성이 지연되고 있습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.",
+        );
+        setPhase("entry");
+      }, 9000);
       peer.on("open", (id) => {
+        clearConnectionTimeout();
+        setConnectionStatus("");
         const host: RoomPlayer = {
           id,
           name: cleanPlayerName(playerName),
@@ -1480,10 +1510,14 @@ function OnlineParty({
       });
       peer.on("connection", acceptConnection);
       peer.on("error", (error) => {
+        clearConnectionTimeout();
+        setConnectionStatus("");
         setRoomError(mapPeerError(error));
         setPhase("entry");
       });
     } catch {
+      clearConnectionTimeout();
+      setConnectionStatus("");
       setRoomError("온라인 연결 모듈을 불러오지 못했습니다.");
       setPhase("entry");
     }
@@ -1491,6 +1525,8 @@ function OnlineParty({
 
   const handleGuestPacket = (packet: RoomPacket) => {
     if (packet.type === "welcome") {
+      clearConnectionTimeout();
+      setConnectionStatus("");
       localIdRef.current = packet.selfId;
       setLocalId(packet.selfId);
       replacePlayers(packet.players);
@@ -1529,6 +1565,8 @@ function OnlineParty({
       reportLocalMatchResult(packet.players, packet.winnerId);
     }
     if (packet.type === "full") {
+      clearConnectionTimeout();
+      setConnectionStatus("");
       setRoomError(
         packet.reason === "ROOM_FULL"
           ? "이 방은 8명으로 가득 찼습니다."
@@ -1541,6 +1579,7 @@ function OnlineParty({
   const joinRoom = async (
     requestedCode = joinCode,
     requestedName = playerName,
+    retryCount = 0,
   ) => {
     const code = requestedCode
       .toUpperCase()
@@ -1550,7 +1589,13 @@ function OnlineParty({
       setRoomError("6자리 방 코드를 입력해 주세요.");
       return;
     }
+    clearConnectionTimeout();
     setRoomError("");
+    setConnectionStatus(
+      retryCount === 0
+        ? "호스트를 찾고 있습니다."
+        : "연결이 지연되어 자동으로 다시 시도하고 있습니다.",
+    );
     setRoomCode(code);
     setRole("guest");
     roleRef.current = "guest";
@@ -1561,41 +1606,73 @@ function OnlineParty({
     peerRef.current?.destroy();
     hostConnectionRef.current = null;
     peerRef.current = null;
+    let failureHandled = false;
+    const failConnection = (message: string) => {
+      if (connectionAttemptRef.current !== attempt) return;
+      if (failureHandled) return;
+      failureHandled = true;
+      clearConnectionTimeout();
+      if (retryCount < 1) {
+        setConnectionStatus(
+          "연결이 지연되어 자동으로 한 번 더 시도하고 있습니다.",
+        );
+        window.setTimeout(() => {
+          if (connectionAttemptRef.current !== attempt) return;
+          void joinRoom(code, requestedName, retryCount + 1);
+        }, 450);
+        return;
+      }
+      connectionAttemptRef.current += 1;
+      hostConnectionRef.current?.close();
+      peerRef.current?.destroy();
+      hostConnectionRef.current = null;
+      peerRef.current = null;
+      setConnectionStatus("");
+      setRoomError(message);
+      setPhase("entry");
+    };
+    connectionTimeoutRef.current = window.setTimeout(() => {
+      failConnection(
+        "호스트와 연결할 수 없습니다. 호스트가 방 화면을 열어 둔 상태인지 확인해 주세요.",
+      );
+    }, 9000);
     try {
       const { Peer } = await import("peerjs");
+      if (connectionAttemptRef.current !== attempt) return;
       const peer = new Peer({ debug: 0 });
       peerRef.current = peer;
       peer.on("open", () => {
         if (connectionAttemptRef.current !== attempt) return;
+        setConnectionStatus("호스트의 방 정보를 불러오고 있습니다.");
         const connection = peer.connect(roomPeerId(code), {
           metadata: { name: cleanPlayerName(requestedName) },
           serialization: "json",
           reliable: true,
         });
         hostConnectionRef.current = connection;
+        connection.on("open", () => {
+          if (connectionAttemptRef.current !== attempt) return;
+          setConnectionStatus("입장 정보를 확인하고 있습니다.");
+        });
         connection.on("data", (data) =>
           handleGuestPacket(data as RoomPacket),
         );
         connection.on("close", () => {
-          if (connectionAttemptRef.current !== attempt) return;
-          setRoomError("호스트와 연결이 끊겼습니다.");
-          setPhase("entry");
+          failConnection(
+            "호스트와의 연결이 끊겼습니다. 호스트가 방에 있는지 확인해 주세요.",
+          );
         });
         connection.on("error", () => {
-          if (connectionAttemptRef.current !== attempt) return;
-          setRoomError("호스트와 연결할 수 없습니다.");
-          setPhase("entry");
+          failConnection(
+            "호스트와 연결할 수 없습니다. 네트워크를 확인해 주세요.",
+          );
         });
       });
       peer.on("error", (error) => {
-        if (connectionAttemptRef.current !== attempt) return;
-        setRoomError(mapPeerError(error));
-        setPhase("entry");
+        failConnection(mapPeerError(error));
       });
     } catch {
-      if (connectionAttemptRef.current !== attempt) return;
-      setRoomError("온라인 연결 모듈을 불러오지 못했습니다.");
-      setPhase("entry");
+      failConnection("온라인 연결 모듈을 불러오지 못했습니다.");
     }
   };
 
@@ -1739,6 +1816,7 @@ function OnlineParty({
   };
 
   const leaveRoom = () => {
+    clearConnectionTimeout();
     connectionAttemptRef.current += 1;
     connectionsRef.current.forEach((connection) => connection.close());
     connectionsRef.current.clear();
@@ -1755,6 +1833,7 @@ function OnlineParty({
     setRole(null);
     setWinnerName("");
     setRoomError("");
+    setConnectionStatus("");
     chatMessagesRef.current = [];
     setChatMessages([]);
     setChatText("");
@@ -1763,6 +1842,7 @@ function OnlineParty({
 
   useEffect(
     () => () => {
+      clearConnectionTimeout();
       connectionsRef.current.forEach((connection) => connection.close());
       hostConnectionRef.current?.close();
       peerRef.current?.destroy();
@@ -1797,6 +1877,9 @@ function OnlineParty({
               <span>ROOM CODE</span>
               <strong>{inviteCode}</strong>
             </div>
+            {connectionStatus && (
+              <p className="invite-connection-status">{connectionStatus}</p>
+            )}
             {roomError && <p className="room-error">{roomError}</p>}
             {phase === "entry" && canAutoJoin && (
               <button
