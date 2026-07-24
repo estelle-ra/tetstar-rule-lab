@@ -57,6 +57,9 @@ type Rules = {
   gravity: number;
   attack: number;
   ghost: boolean;
+  targetMode: "cycle" | "random" | "all" | "manual";
+  itemsEnabled: boolean;
+  inkLimit: number;
 };
 
 type GameSnapshot = {
@@ -87,7 +90,16 @@ type RoomPlayer = {
   slot: number;
   alive: boolean;
   connected: boolean;
+  spectating?: boolean;
   snapshot?: GameSnapshot;
+};
+
+type AttackLog = {
+  id: string;
+  fromName: string;
+  toName: string;
+  amount: number;
+  kind: "garbage" | "ink";
 };
 
 type ChatMessage = {
@@ -112,6 +124,10 @@ type RoomPacket =
   | { type: "start"; matchId: number; players: RoomPlayer[]; rules: Rules }
   | { type: "attack"; amount: number }
   | { type: "garbage"; id: number; amount: number }
+  | { type: "target-select"; targetId: string }
+  | { type: "item-use"; item: "ink"; targetId: string }
+  | { type: "ink"; id: number }
+  | { type: "attack-log"; log: AttackLog }
   | { type: "chat-submit"; text: string }
   | { type: "chat"; message: ChatMessage }
   | { type: "host-transfer"; hostId: string; players: RoomPlayer[] }
@@ -191,6 +207,9 @@ const DEFAULT_RULES: Rules = {
   gravity: 420,
   attack: 1,
   ghost: true,
+  targetMode: "cycle",
+  itemsEnabled: false,
+  inkLimit: 2,
 };
 
 const SINGLE_CONTROLS: Controls = {
@@ -316,6 +335,7 @@ type BoardProps = {
   mode: "sprint" | "blitz" | "zen" | "versus";
   compact?: boolean;
   garbage?: { id: number; amount: number };
+  ink?: { id: number };
   onAttack?: (amount: number) => void;
   onFinish?: (status: "won" | "lost") => void;
   onSnapshot?: (snapshot: GameSnapshot) => void;
@@ -329,6 +349,7 @@ function GameBoard({
   mode,
   compact = false,
   garbage,
+  ink,
   onAttack,
   onFinish,
   onSnapshot,
@@ -933,6 +954,18 @@ function GameBoard({
             )}
           </div>
           {flash && <div className="line-flash">{flash}</div>}
+          {Boolean(ink?.id) && status === "playing" && (
+            <div
+              className="ink-overlay"
+              aria-label="먹물 공격에 시야가 가려짐"
+              key={ink?.id}
+            >
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+          )}
           {status !== "playing" && (
             <div className="board-overlay">
               <strong>
@@ -1133,14 +1166,25 @@ function PartyChat({
 function RemoteBoard({
   player,
   isSelf,
+  selected,
+  targeting,
+  inkRemaining,
+  onSelect,
+  onInk,
 }: {
   player: RoomPlayer;
   isSelf?: boolean;
+  selected?: boolean;
+  targeting?: boolean;
+  inkRemaining?: number;
+  onSelect?: () => void;
+  onInk?: () => void;
 }) {
   const cells = player.snapshot?.cells ?? Array(HEIGHT * WIDTH).fill("");
   return (
     <article
-      className={`remote-player ${!player.alive ? "remote-player-out" : ""} ${isSelf ? "remote-player-self" : ""}`}
+      className={`remote-player ${!player.alive ? "remote-player-out" : ""} ${isSelf ? "remote-player-self" : ""} ${selected ? "remote-player-selected" : ""} ${targeting ? "remote-player-targetable" : ""}`}
+      onClick={targeting ? onSelect : undefined}
     >
       <div className="remote-player-head">
         <span>
@@ -1157,6 +1201,29 @@ function RemoteBoard({
         <span>{player.snapshot?.lines ?? 0} LINES</span>
         <span>{(player.snapshot?.score ?? 0).toLocaleString()} PTS</span>
       </div>
+      {targeting && (
+        <button
+          className="target-hint"
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect?.();
+          }}
+        >
+          {selected ? "TARGETED" : "SELECT"}
+        </button>
+      )}
+      {onInk && (
+        <button
+          className="ink-item-button"
+          disabled={!inkRemaining || !player.alive}
+          onClick={(event) => {
+            event.stopPropagation();
+            onInk();
+          }}
+        >
+          INK ×{inkRemaining}
+        </button>
+      )}
     </article>
   );
 }
@@ -1191,6 +1258,10 @@ function OnlineParty({
   const [matchId, setMatchId] = useState(0);
   const [matchRules, setMatchRules] = useState(rules);
   const [garbageSignal, setGarbageSignal] = useState({ id: 0, amount: 0 });
+  const [inkSignal, setInkSignal] = useState({ id: 0 });
+  const [attackLogs, setAttackLogs] = useState<AttackLog[]>([]);
+  const [selectedTargetId, setSelectedTargetId] = useState("");
+  const [inkUsed, setInkUsed] = useState(0);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatText, setChatText] = useState("");
   const [inviteStatus, setInviteStatus] = useState("COPY INVITE LINK");
@@ -1213,6 +1284,8 @@ function OnlineParty({
   const activeMatchIdRef = useRef(0);
   const resultMatchIdRef = useRef(0);
   const targetCursor = useRef(0);
+  const manualTargetsRef = useRef(new Map<string, string>());
+  const itemUsesRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     if (phaseRef.current === "entry") setPlayerName(defaultPlayerName);
@@ -1250,6 +1323,13 @@ function OnlineParty({
     const next = [...chatMessagesRef.current, message].slice(-80);
     chatMessagesRef.current = next;
     setChatMessages(next);
+  };
+
+  const appendAttackLog = (log: AttackLog) => {
+    setAttackLogs((current) => [...current, log].slice(-5));
+    window.setTimeout(() => {
+      setAttackLogs((current) => current.filter((item) => item.id !== log.id));
+    }, 4200);
   };
 
   const createChatMessage = (
@@ -1313,7 +1393,7 @@ function OnlineParty({
     const localPlayer = finalPlayers.find(
       (player) => player.id === localIdRef.current,
     );
-    if (!localPlayer) return;
+    if (!localPlayer || localPlayer.spectating) return;
     resultMatchIdRef.current = activeMatchId;
     onMatchResult({
       mode: "versus",
@@ -1369,21 +1449,82 @@ function OnlineParty({
         player.id !== fromId && player.alive && player.connected,
     );
     if (!opponents.length) return;
-    const target = opponents[targetCursor.current % opponents.length];
-    targetCursor.current += 1;
-    const packet: RoomPacket = {
-      type: "garbage",
-      id: Date.now() + targetCursor.current,
-      amount,
-    };
-    if (target.id === localIdRef.current) {
-      setGarbageSignal({ id: packet.id, amount });
-    } else if (realtimeChannelRef.current) {
-      sendRealtimePacket(packet, target.id);
+    const mode = rulesRef.current.targetMode;
+    let targets: RoomPlayer[];
+    if (mode === "all") {
+      targets = opponents;
+    } else if (mode === "random") {
+      targets = [opponents[Math.floor(Math.random() * opponents.length)]];
+    } else if (mode === "manual") {
+      const selectedId = manualTargetsRef.current.get(fromId);
+      targets = [
+        opponents.find((player) => player.id === selectedId) ??
+          opponents[targetCursor.current % opponents.length],
+      ];
+      targetCursor.current += 1;
     } else {
-      const connection = connectionsRef.current.get(target.id);
-      if (connection?.open) connection.send(packet);
+      targets = [opponents[targetCursor.current % opponents.length]];
+      targetCursor.current += 1;
     }
+    const sender =
+      playersRef.current.find((player) => player.id === fromId)?.name ?? "PLAYER";
+    targets.forEach((target, index) => {
+      const packet: RoomPacket = {
+        type: "garbage",
+        id: Date.now() + targetCursor.current + index,
+        amount,
+      };
+      if (target.id === localIdRef.current) {
+        setGarbageSignal({ id: packet.id, amount });
+      } else if (realtimeChannelRef.current) {
+        sendRealtimePacket(packet, target.id);
+      } else {
+        const connection = connectionsRef.current.get(target.id);
+        if (connection?.open) connection.send(packet);
+      }
+      const log: AttackLog = {
+        id: `${packet.id}-${fromId}-${target.id}`,
+        fromName: sender,
+        toName: target.name,
+        amount,
+        kind: "garbage",
+      };
+      appendAttackLog(log);
+      broadcast({ type: "attack-log", log });
+    });
+  };
+
+  const routeInkItem = (fromId: string, targetId: string) => {
+    if (!rulesRef.current.itemsEnabled) return;
+    const sender = playersRef.current.find(
+      (player) => player.id === fromId && player.alive && player.connected,
+    );
+    const target = playersRef.current.find(
+      (player) =>
+        player.id === targetId &&
+        player.id !== fromId &&
+        player.alive &&
+        player.connected,
+    );
+    if (!sender || !target) return;
+    const used = itemUsesRef.current.get(fromId) ?? 0;
+    if (used >= rulesRef.current.inkLimit) return;
+    itemUsesRef.current.set(fromId, used + 1);
+    const id = Date.now() + used;
+    if (target.id === localIdRef.current) {
+      setInkSignal({ id });
+    } else {
+      sendRealtimePacket({ type: "ink", id }, target.id);
+    }
+    const log: AttackLog = {
+      id: `ink-${id}-${fromId}-${target.id}`,
+      fromName: sender.name,
+      toName: target.name,
+      amount: 0,
+      kind: "ink",
+    };
+    appendAttackLog(log);
+    broadcast({ type: "attack-log", log });
   };
 
   const handleHostPacket = (senderId: string, packet: RoomPacket) => {
@@ -1409,13 +1550,19 @@ function OnlineParty({
         );
         return;
       }
-      if (phaseRef.current !== "lobby") {
+      if (
+        phaseRef.current !== "lobby" &&
+        phaseRef.current !== "playing" &&
+        phaseRef.current !== "ended"
+      ) {
         sendRealtimePacket(
           { type: "full", reason: "MATCH_STARTED" },
           senderId,
         );
         return;
       }
+      const joiningAsSpectator = phaseRef.current !== "lobby";
+      const matchIsLive = phaseRef.current === "playing";
       const occupied = new Set(playersRef.current.map((player) => player.slot));
       const slot = Array.from({ length: 8 }, (_, index) => index).find(
         (index) => !occupied.has(index),
@@ -1427,8 +1574,9 @@ function OnlineParty({
           id: senderId,
           name: cleanPlayerName(packet.name),
           slot,
-          alive: true,
+          alive: !joiningAsSpectator,
           connected: true,
+          spectating: joiningAsSpectator,
         },
       ].sort((a, b) => a.slot - b.slot);
       replacePlayers(next);
@@ -1437,7 +1585,7 @@ function OnlineParty({
           type: "welcome",
           selfId: senderId,
           players: next,
-          started: false,
+          started: matchIsLive,
           rules: rulesRef.current,
           messages: chatMessagesRef.current,
         },
@@ -1446,7 +1594,7 @@ function OnlineParty({
       broadcast({
         type: "roster",
         players: next,
-        started: false,
+        started: matchIsLive,
         rules: rulesRef.current,
       });
       return;
@@ -1459,6 +1607,12 @@ function OnlineParty({
         appendChat(message);
         broadcast({ type: "chat", message });
       }
+    }
+    if (packet.type === "target-select") {
+      manualTargetsRef.current.set(senderId, packet.targetId);
+    }
+    if (packet.type === "item-use") {
+      routeInkItem(senderId, packet.targetId);
     }
     if (packet.type === "attack") {
       routeAttack(senderId, packet.amount);
@@ -1658,6 +1812,12 @@ function OnlineParty({
     }
     if (packet.type === "garbage") {
       setGarbageSignal({ id: packet.id, amount: packet.amount });
+    }
+    if (packet.type === "ink") {
+      setInkSignal({ id: packet.id });
+    }
+    if (packet.type === "attack-log") {
+      appendAttackLog(packet.log);
     }
     if (packet.type === "chat") {
       appendChat(packet.message);
@@ -2053,6 +2213,7 @@ function OnlineParty({
         ...player,
         alive: true,
         connected: true,
+        spectating: false,
         snapshot: undefined,
       }));
     if (next.length < 2) {
@@ -2063,6 +2224,11 @@ function OnlineParty({
     }
     const nextMatchId = Date.now();
     targetCursor.current = 0;
+    manualTargetsRef.current.clear();
+    itemUsesRef.current.clear();
+    setSelectedTargetId("");
+    setInkUsed(0);
+    setAttackLogs([]);
     replacePlayers(next);
     setRoomError("");
     setWinnerName("");
@@ -2107,6 +2273,31 @@ function OnlineParty({
       sendRealtimePacket({ type: "attack", amount });
     } else if (hostConnectionRef.current?.open) {
       hostConnectionRef.current.send({ type: "attack", amount } satisfies RoomPacket);
+    }
+  };
+
+  const selectTarget = (targetId: string) => {
+    setSelectedTargetId(targetId);
+    if (roleRef.current === "host") {
+      manualTargetsRef.current.set(localIdRef.current, targetId);
+    } else {
+      sendRealtimePacket({ type: "target-select", targetId });
+    }
+  };
+
+  const activateInkItem = (targetId: string) => {
+    if (
+      !matchRules.itemsEnabled ||
+      inkUsed >= matchRules.inkLimit ||
+      !localPlayer?.alive
+    ) {
+      return;
+    }
+    setInkUsed((current) => current + 1);
+    if (roleRef.current === "host") {
+      routeInkItem(localIdRef.current, targetId);
+    } else {
+      sendRealtimePacket({ type: "item-use", item: "ink", targetId });
     }
   };
 
@@ -2180,6 +2371,12 @@ function OnlineParty({
     setWinnerName("");
     setRoomError("");
     setConnectionStatus("");
+    setAttackLogs([]);
+    setSelectedTargetId("");
+    setInkUsed(0);
+    setInkSignal({ id: 0 });
+    manualTargetsRef.current.clear();
+    itemUsesRef.current.clear();
     chatMessagesRef.current = [];
     setChatMessages([]);
     setChatText("");
@@ -2199,6 +2396,10 @@ function OnlineParty({
 
   const localPlayer = players.find((player) => player.id === localId);
   const remotePlayers = players.filter((player) => player.id !== localId);
+  const isSpectating = Boolean(
+    localPlayer && (!localPlayer.alive || localPlayer.spectating),
+  );
+  const inkRemaining = Math.max(0, matchRules.inkLimit - inkUsed);
   const survivors = players.filter(
     (player) => player.alive && player.connected,
   ).length;
@@ -2367,7 +2568,9 @@ function OnlineParty({
             <strong>HOST RULES</strong>
             <span>
               {matchRules.gravity}ms 낙하 · 공격 {matchRules.attack.toFixed(1)}× ·
-              고스트 {matchRules.ghost ? "ON" : "OFF"}
+              고스트 {matchRules.ghost ? "ON" : "OFF"} · 타깃{" "}
+              {matchRules.targetMode.toUpperCase()} · 아이템{" "}
+              {matchRules.itemsEnabled ? `INK ×${matchRules.inkLimit}` : "OFF"}
             </span>
           </p>
           <div className="attack-rules">
@@ -2442,7 +2645,7 @@ function OnlineParty({
   }
 
   return (
-    <section className="online-match">
+    <section className={`online-match ${isSpectating ? "online-spectating" : ""}`}>
       <div className="online-match-bar">
         <div>
           <span>ROOM</span>
@@ -2456,9 +2659,32 @@ function OnlineParty({
         </div>
         <button onClick={leaveRoom}>LEAVE</button>
       </div>
+      <div className="attack-feed" aria-live="polite">
+        {attackLogs.map((log) => (
+          <div key={log.id}>
+            <strong>{log.fromName}</strong>
+            <span>{log.kind === "ink" ? "INK" : `${log.amount} GARBAGE`}</span>
+            <em>→ {log.toName}</em>
+          </div>
+        ))}
+      </div>
+      <div className="mobile-opponent-strip" aria-label="상대 생존 목록">
+        {remotePlayers.map((player) => (
+          <button
+            className={player.id === selectedTargetId ? "strip-selected" : ""}
+            disabled={!player.alive}
+            key={player.id}
+            onClick={() => selectTarget(player.id)}
+          >
+            <i className={player.alive && player.connected ? "alive" : ""} />
+            <span>{player.name}</span>
+            <em>{player.alive ? "LIVE" : "OUT"}</em>
+          </button>
+        ))}
+      </div>
       <div className="online-arena">
         <div className="local-board-zone">
-          {localPlayer && (
+          {localPlayer && !isSpectating ? (
             <GameBoard
               key={matchId}
               player={localPlayer.name}
@@ -2466,20 +2692,53 @@ function OnlineParty({
               rules={matchRules}
               mode="versus"
               garbage={garbageSignal}
+              ink={inkSignal}
               onAttack={sendAttack}
               onFinish={finishLocalPlayer}
               onSnapshot={shareSnapshot}
             />
+          ) : (
+            <div className="spectator-banner">
+              <span>SPECTATING</span>
+              <strong>
+                {localPlayer?.spectating
+                  ? "다음 경기부터 참가합니다."
+                  : "생존자의 플레이를 관전 중입니다."}
+              </strong>
+            </div>
           )}
         </div>
         <aside className="opponents-zone">
           <div className="opponents-title">
             <span>OPPONENTS</span>
-            <em>LIVE BOARDS</em>
+            <em>
+              {matchRules.targetMode.toUpperCase()} TARGET ·{" "}
+              {matchRules.itemsEnabled ? `INK ${inkRemaining}` : "ITEMS OFF"}
+            </em>
           </div>
           <div className="opponents-grid">
             {remotePlayers.map((player) => (
-              <RemoteBoard player={player} key={player.id} />
+              <RemoteBoard
+                player={player}
+                key={player.id}
+                selected={player.id === selectedTargetId}
+                targeting={
+                  !isSpectating &&
+                  matchRules.targetMode === "manual" &&
+                  player.alive &&
+                  player.connected
+                }
+                inkRemaining={inkRemaining}
+                onSelect={() => selectTarget(player.id)}
+                onInk={
+                  !isSpectating &&
+                  matchRules.itemsEnabled &&
+                  player.alive &&
+                  player.connected
+                    ? () => activateInkItem(player.id)
+                    : undefined
+                }
+              />
             ))}
           </div>
           <PartyChat
@@ -2575,6 +2834,67 @@ function RulesPanel({
             </span>
             <span className={`switch ${rules.ghost ? "switch-on" : ""}`} />
           </button>
+          {multiplayer && (
+            <>
+              <label>
+                <span>
+                  <strong>공격 타깃 방식</strong>
+                  <em>{rules.targetMode.toUpperCase()}</em>
+                </span>
+                <select
+                  value={rules.targetMode}
+                  onChange={(event) =>
+                    setRules({
+                      ...rules,
+                      targetMode: event.target.value as Rules["targetMode"],
+                    })
+                  }
+                >
+                  <option value="cycle">순환 — 상대를 차례대로</option>
+                  <option value="random">랜덤 — 공격마다 무작위</option>
+                  <option value="all">전원 — 모든 생존자에게</option>
+                  <option value="manual">수동 — 상대 창을 클릭</option>
+                </select>
+                <small>전원 공격은 같은 가비지를 모든 생존 상대에게 보냅니다.</small>
+              </label>
+              <button
+                className="switch-row"
+                onClick={() =>
+                  setRules({ ...rules, itemsEnabled: !rules.itemsEnabled })
+                }
+                aria-pressed={rules.itemsEnabled}
+              >
+                <span>
+                  <strong>아이템전</strong>
+                  <small>상대 보드를 먹물로 4.2초 가립니다.</small>
+                </span>
+                <span
+                  className={`switch ${rules.itemsEnabled ? "switch-on" : ""}`}
+                />
+              </button>
+              {rules.itemsEnabled && (
+                <label>
+                  <span>
+                    <strong>먹물 개수</strong>
+                    <em>게임당 {rules.inkLimit}개</em>
+                  </span>
+                  <input
+                    type="range"
+                    min="1"
+                    max="5"
+                    step="1"
+                    value={rules.inkLimit}
+                    onChange={(event) =>
+                      setRules({
+                        ...rules,
+                        inkLimit: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+              )}
+            </>
+          )}
           <p>
             {multiplayer
               ? "온라인 대전은 방장의 설정을 모든 참가자에게 동일하게 적용합니다."
@@ -2899,7 +3219,9 @@ export default function GameClient() {
           ? "screen-home"
           : screen === "versus" && !multiplayerPlaying
             ? "screen-lobby"
-            : "screen-playing"
+            : screen === "versus"
+              ? "screen-playing screen-multiplayer-playing"
+              : "screen-playing"
       }`}
       style={
         {
