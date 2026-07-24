@@ -7,7 +7,10 @@ import {
   useRef,
   useState,
 } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type {
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import type { DataConnection, Peer as PeerInstance } from "peerjs";
 import AuthGate, { type PlayerIdentity } from "./AuthGate";
 import { supabase } from "./lib/supabase";
@@ -18,6 +21,7 @@ type RenderCell = Exclude<Cell, null> | "ghost" | "";
 type Board = Cell[][];
 type Status = "playing" | "paused" | "won" | "lost";
 type Screen = "home" | "sprint" | "blitz" | "zen" | "versus";
+type GameTheme = "megacity" | "orbit" | "refinery";
 type GameAction =
   | "left"
   | "right"
@@ -124,6 +128,16 @@ const LOCK_DELAY_MS = 350;
 const MAX_LOCK_RESETS = 8;
 const MAX_GROUNDED_MS = 1800;
 const PIECES: PieceName[] = ["I", "J", "L", "O", "S", "T", "Z"];
+const GAME_THEMES: GameTheme[] = ["megacity", "orbit", "refinery"];
+const CONFIGURED_SITE_URL = process.env.NEXT_PUBLIC_SITE_URL;
+const GAME_ASSET_BASE_PATH = CONFIGURED_SITE_URL
+  ? `${new URL(CONFIGURED_SITE_URL).pathname.replace(/\/+$/, "")}/`
+  : "/";
+
+function pickGameTheme(current: GameTheme): GameTheme {
+  const candidates = GAME_THEMES.filter((theme) => theme !== current);
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
 
 const SHAPES: Record<PieceName, number[][]> = {
   I: [
@@ -2222,6 +2236,7 @@ export default function GameClient() {
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [inviteRoomCode, setInviteRoomCode] = useState("");
   const [multiplayerPlaying, setMultiplayerPlaying] = useState(false);
+  const [gameTheme, setGameTheme] = useState<GameTheme>("megacity");
   const [personalBest, setPersonalBest] =
     useState<PersonalBestResult | null>(null);
   const personalBestTimerRef = useRef<number | null>(null);
@@ -2236,6 +2251,7 @@ export default function GameClient() {
     const timer = window.setTimeout(() => {
       setInviteRoomCode(code);
       setMultiplayerPlaying(false);
+      setGameTheme((current) => pickGameTheme(current));
       setRun((value) => value + 1);
       setScreen("versus");
       window.scrollTo({ top: 0, behavior: "auto" });
@@ -2418,7 +2434,10 @@ export default function GameClient() {
       }
     }
     setMultiplayerPlaying(false);
-    if (nextScreen !== "versus") setInviteRoomCode("");
+    if (nextScreen !== "versus") {
+      setInviteRoomCode("");
+      setGameTheme((current) => pickGameTheme(current));
+    }
     setRun((value) => value + 1);
     setScreen(nextScreen);
     window.requestAnimationFrame(() => {
@@ -2430,6 +2449,13 @@ export default function GameClient() {
     });
   };
 
+  const handleMultiplayerPlayingChange = useCallback((playing: boolean) => {
+    if (playing) {
+      setGameTheme((current) => pickGameTheme(current));
+    }
+    setMultiplayerPlaying(playing);
+  }, []);
+
   return (
     <main
       className={`app-shell ${
@@ -2439,6 +2465,11 @@ export default function GameClient() {
             ? "screen-lobby"
             : "screen-playing"
       }`}
+      style={
+        {
+          "--game-theme-image": `url("${GAME_ASSET_BASE_PATH}themes/${gameTheme}.webp")`,
+        } as CSSProperties
+      }
     >
       <header className="topbar">
         <button className="brand" onClick={goHome}>
@@ -2595,9 +2626,7 @@ export default function GameClient() {
                 {rules.gravity}MS / {rules.attack.toFixed(1)}× ATTACK
               </strong>
             </button>
-            {screen === "versus" ? (
-              <span className="online-mode-label">MULTIPLAYER / P2P</span>
-            ) : (
+            {screen !== "versus" && (
               <button className="restart-button" onClick={() => start(screen)}>
                 ↻ RESTART
               </button>
@@ -2610,7 +2639,7 @@ export default function GameClient() {
               defaultPlayerName={identity?.username ?? "PLAYER"}
               initialRoomCode={inviteRoomCode}
               canAutoJoin={identityReady && Boolean(identity)}
-              onPlayingChange={setMultiplayerPlaying}
+              onPlayingChange={handleMultiplayerPlayingChange}
               onMatchResult={saveGameResult}
               key={run}
             />

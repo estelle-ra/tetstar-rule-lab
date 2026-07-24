@@ -137,6 +137,9 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /clearRepeatHandles/);
   assert.match(gameClient, /RETRY JOIN/);
   assert.match(gameClient, /MULTIPLAYER INVITE/);
+  assert.doesNotMatch(gameClient, /online-mode-label/);
+  assert.match(gameClient, /GAME_THEMES/);
+  assert.match(gameClient, /themes\/\$\{gameTheme\}\.webp/);
   assert.match(gameClient, /onMatchResult/);
   assert.match(gameClient, /aria-label="모바일 게임 조작"/);
   assert.match(gameClient, /initialDelay = 105/);
@@ -196,6 +199,9 @@ test("ships without starter-only assets", async () => {
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
   );
   await access(new URL("../public/og.png", import.meta.url));
+  await access(new URL("../public/themes/megacity.webp", import.meta.url));
+  await access(new URL("../public/themes/orbit.webp", import.meta.url));
+  await access(new URL("../public/themes/refinery.webp", import.meta.url));
   await access(
     new URL("../app/fonts/PretendardVariable.woff2", import.meta.url),
   );
