@@ -167,6 +167,10 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /remote-ink-overlay/);
   assert.match(gameClient, /focusChatWithEnter/);
   assert.match(gameClient, /inputRef\.current\?\.focus\(\)/);
+  assert.match(gameClient, /window\.visualViewport/);
+  assert.match(gameClient, /--visual-viewport-height/);
+  assert.match(gameClient, /블록 왼쪽으로 한 칸 이동/);
+  assert.match(gameClient, /블록 오른쪽으로 한 칸 이동/);
   assert.match(gameClient, /setInkSignal\(\{ id: 0 \}\)/);
   assert.match(gameClient, /className="match-result-layer"/);
   assert.match(gameClient, /MATCH COMPLETE/);
@@ -179,6 +183,8 @@ test("ships without starter-only assets", async () => {
   assert.match(globalCss, /\.mobile-opponent-strip/);
   assert.match(globalCss, /grid-template-areas: "hold board next"/);
   assert.match(globalCss, /\.match-result-card/);
+  assert.match(globalCss, /\.touch-step/);
+  assert.match(globalCss, /var\(--visual-viewport-height\)/);
   assert.doesNotMatch(gameClient, /online-mode-label/);
   assert.match(gameClient, /GAME_THEMES/);
   assert.match(gameClient, /themes\/\$\{gameTheme\}\.webp/);

@@ -1011,34 +1011,50 @@ function GameBoard({
         </aside>
       </div>
       <div className="mobile-controls" aria-label="모바일 게임 조작">
-        <div
-          className={`touch-zone ${joystickActive ? "touch-zone-active" : ""}`}
-          role="group"
-          aria-label="왼손 이동 조이스틱"
-          onPointerDown={startJoystick}
-          onPointerMove={updateJoystick}
-          onPointerUp={stopJoystick}
-          onPointerCancel={stopJoystick}
-          onLostPointerCapture={stopJoystick}
-        >
-          <span className="touch-zone-hint">왼손으로 터치한 뒤 끌어서 이동</span>
-          {joystickActive && (
-            <span
-              className="joystick-base"
-              style={{
-                left: `${joystickOrigin.x}px`,
-                top: `${joystickOrigin.y}px`,
-              }}
-            >
-              <span className="joystick-deadzone" />
+        <div className="touch-movement">
+          <button
+            aria-label="블록 왼쪽으로 한 칸 이동"
+            className="touch-step touch-step-left"
+            onPointerDown={(event) => handleMobilePress(event, "left")}
+          >
+            ←
+          </button>
+          <div
+            className={`touch-zone ${joystickActive ? "touch-zone-active" : ""}`}
+            role="group"
+            aria-label="왼손 이동 조이스틱"
+            onPointerDown={startJoystick}
+            onPointerMove={updateJoystick}
+            onPointerUp={stopJoystick}
+            onPointerCancel={stopJoystick}
+            onLostPointerCapture={stopJoystick}
+          >
+            <span className="touch-zone-hint">누른 뒤 끌어서 연속 이동</span>
+            {joystickActive && (
               <span
-                className="joystick-stick"
+                className="joystick-base"
                 style={{
-                  transform: `translate(${joystickVector.x}px, ${joystickVector.y}px)`,
+                  left: `${joystickOrigin.x}px`,
+                  top: `${joystickOrigin.y}px`,
                 }}
-              />
-            </span>
-          )}
+              >
+                <span className="joystick-deadzone" />
+                <span
+                  className="joystick-stick"
+                  style={{
+                    transform: `translate(${joystickVector.x}px, ${joystickVector.y}px)`,
+                  }}
+                />
+              </span>
+            )}
+          </div>
+          <button
+            aria-label="블록 오른쪽으로 한 칸 이동"
+            className="touch-step touch-step-right"
+            onPointerDown={(event) => handleMobilePress(event, "right")}
+          >
+            →
+          </button>
         </div>
         <div className="touch-actions" aria-label="오른손 액션 버튼">
           <button
@@ -2962,12 +2978,14 @@ function OnlineParty({
               />
             ))}
           </div>
-          <PartyChat
-            messages={chatMessages}
-            value={chatText}
-            onChange={setChatText}
-            onSend={sendChat}
-          />
+          {phase !== "ended" && (
+            <PartyChat
+              messages={chatMessages}
+              value={chatText}
+              onChange={setChatText}
+              onSend={sendChat}
+            />
+          )}
         </aside>
       </div>
       {phase === "ended" && (
@@ -3004,6 +3022,12 @@ function OnlineParty({
                 </div>
               ))}
             </div>
+            <PartyChat
+              messages={chatMessages}
+              value={chatText}
+              onChange={setChatText}
+              onSend={sendChat}
+            />
             <div className="result-actions">
               {role === "host" && (
                 <button className="start-online" onClick={startMatch}>
@@ -3272,6 +3296,36 @@ export default function GameClient() {
   const [personalBest, setPersonalBest] =
     useState<PersonalBestResult | null>(null);
   const personalBestTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const updateVisualViewport = () => {
+      const viewport = window.visualViewport;
+      const height = Math.max(320, viewport?.height ?? window.innerHeight);
+      const top = Math.max(0, viewport?.offsetTop ?? 0);
+      root.style.setProperty("--visual-viewport-height", `${height}px`);
+      root.style.setProperty("--visual-viewport-top", `${top}px`);
+    };
+    updateVisualViewport();
+    window.addEventListener("resize", updateVisualViewport);
+    window.addEventListener("orientationchange", updateVisualViewport);
+    window.visualViewport?.addEventListener("resize", updateVisualViewport);
+    window.visualViewport?.addEventListener("scroll", updateVisualViewport);
+    return () => {
+      window.removeEventListener("resize", updateVisualViewport);
+      window.removeEventListener("orientationchange", updateVisualViewport);
+      window.visualViewport?.removeEventListener(
+        "resize",
+        updateVisualViewport,
+      );
+      window.visualViewport?.removeEventListener(
+        "scroll",
+        updateVisualViewport,
+      );
+      root.style.removeProperty("--visual-viewport-height");
+      root.style.removeProperty("--visual-viewport-top");
+    };
+  }, []);
 
   useEffect(() => {
     const code = new URLSearchParams(window.location.search)
