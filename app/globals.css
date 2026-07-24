@@ -790,6 +790,18 @@ input:focus-visible {
     );
   }
 
+  .screen-playing .online-match {
+    padding-bottom: 32px;
+  }
+
+  .screen-playing .online-match .game-rig {
+    --cell: clamp(
+      19px,
+      min(4.8vw, calc((100dvh - 330px) / 20)),
+      56px
+    );
+  }
+
   .screen-playing .solo-wrap {
     align-items: start;
     grid-template-columns: auto;

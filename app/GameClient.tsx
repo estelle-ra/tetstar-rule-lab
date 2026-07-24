@@ -114,6 +114,7 @@ type RoomPacket =
   | { type: "garbage"; id: number; amount: number }
   | { type: "chat-submit"; text: string }
   | { type: "chat"; message: ChatMessage }
+  | { type: "host-transfer"; hostId: string; players: RoomPlayer[] }
   | { type: "snapshot"; playerId?: string; snapshot: GameSnapshot }
   | { type: "finish"; status: "lost" }
   | {
@@ -1182,6 +1183,7 @@ function OnlineParty({
   const [playerName, setPlayerName] = useState(defaultPlayerName);
   const [joinCode, setJoinCode] = useState(initialRoomCode);
   const [roomCode, setRoomCode] = useState("");
+  const [hostId, setHostId] = useState("");
   const [localId, setLocalId] = useState("");
   const [players, setPlayers] = useState<RoomPlayer[]>([]);
   const [roomError, setRoomError] = useState("");
@@ -1592,6 +1594,7 @@ function OnlineParty({
       peer.on("open", (id) => {
         clearConnectionTimeout();
         setConnectionStatus("");
+        setHostId(id);
         const host: RoomPlayer = {
           id,
           name: cleanPlayerName(playerName),
@@ -1626,6 +1629,7 @@ function OnlineParty({
       localIdRef.current = packet.selfId;
       setLocalId(packet.selfId);
       replacePlayers(packet.players);
+      rulesRef.current = packet.rules;
       setMatchRules(packet.rules);
       const messages = packet.messages ?? [];
       chatMessagesRef.current = messages;
@@ -1634,10 +1638,14 @@ function OnlineParty({
     }
     if (packet.type === "roster") {
       replacePlayers(packet.players);
-      if (phaseRef.current !== "playing") setMatchRules(packet.rules);
+      if (phaseRef.current !== "playing") {
+        rulesRef.current = packet.rules;
+        setMatchRules(packet.rules);
+      }
     }
     if (packet.type === "start") {
       replacePlayers(packet.players);
+      rulesRef.current = packet.rules;
       setMatchRules(packet.rules);
       setMatchId(packet.matchId);
       activeMatchIdRef.current = packet.matchId;
@@ -1746,6 +1754,7 @@ function OnlineParty({
           reliable: true,
         });
         hostConnectionRef.current = connection;
+        setHostId(connection.peer);
         connection.on("open", () => {
           if (connectionAttemptRef.current !== attempt) return;
           setConnectionStatus("입장 정보를 확인하고 있습니다.");
@@ -1784,12 +1793,22 @@ function OnlineParty({
     ) {
       return;
     }
+    if (envelope.packet.type === "host-transfer") {
+      realtimeHostIdRef.current = envelope.packet.hostId;
+      setHostId(envelope.packet.hostId);
+      replacePlayers(envelope.packet.players);
+      const isNewHost = envelope.packet.hostId === localId;
+      roleRef.current = isNewHost ? "host" : "guest";
+      setRole(isNewHost ? "host" : "guest");
+      return;
+    }
     if (roleRef.current === "host") {
       handleHostPacket(envelope.senderId, envelope.packet);
       return;
     }
     if (envelope.packet.type === "welcome") {
       realtimeHostIdRef.current = envelope.senderId;
+      setHostId(envelope.senderId);
     }
     if (
       realtimeHostIdRef.current &&
@@ -1804,6 +1823,7 @@ function OnlineParty({
     const channel = realtimeChannelRef.current;
     realtimeChannelRef.current = null;
     realtimeHostIdRef.current = "";
+    setHostId("");
     if (channel && supabase) void supabase.removeChannel(channel);
   };
 
@@ -1815,6 +1835,51 @@ function OnlineParty({
     setConnectionStatus("");
     setRoomError(message);
     setPhase("entry");
+  };
+
+  const handleRealtimePresenceLeave = (
+    departedId: string,
+    attempt: number,
+  ) => {
+    if (connectionAttemptRef.current !== attempt) return;
+    if (departedId !== realtimeHostIdRef.current) {
+      if (roleRef.current === "host") handlePeerDeparture(departedId);
+      return;
+    }
+
+    const remaining = playersRef.current
+      .filter((player) => player.id !== departedId && player.connected)
+      .sort((a, b) => a.slot - b.slot);
+    if (!remaining.length) {
+      failRealtimeConnection("방의 모든 참가자가 나갔습니다.", attempt);
+      return;
+    }
+
+    const nextHost = remaining[0];
+    const nextPlayers =
+      phaseRef.current === "lobby"
+        ? remaining
+        : playersRef.current.map((player) =>
+            player.id === departedId
+              ? { ...player, connected: false, alive: false }
+              : player,
+          );
+    realtimeHostIdRef.current = nextHost.id;
+    setHostId(nextHost.id);
+    replacePlayers(nextPlayers);
+
+    const isNewHost = nextHost.id === localIdRef.current;
+    roleRef.current = isNewHost ? "host" : "guest";
+    setRole(isNewHost ? "host" : "guest");
+    if (!isNewHost) return;
+
+    broadcast({
+      type: "host-transfer",
+      hostId: nextHost.id,
+      players: nextPlayers,
+    });
+    publishRoster(nextPlayers);
+    concludeIfNeeded(nextPlayers);
   };
 
   const createRealtimeRoom = async () => {
@@ -1831,7 +1896,9 @@ function OnlineParty({
     const attempt = connectionAttemptRef.current + 1;
     connectionAttemptRef.current = attempt;
     localIdRef.current = localId;
+    realtimeHostIdRef.current = localId;
     setLocalId(localId);
+    setHostId(localId);
     setRoomCode(code);
     const channel = supabase.channel(`tetstar-room-${code.toLowerCase()}`, {
       config: {
@@ -1843,7 +1910,7 @@ function OnlineParty({
     channel
       .on("broadcast", { event: "room" }, receiveRealtimeMessage)
       .on("presence", { event: "leave" }, ({ key }) => {
-        if (roleRef.current === "host") handlePeerDeparture(key);
+        handleRealtimePresenceLeave(key, attempt);
       })
       .subscribe((status) => {
         if (connectionAttemptRef.current !== attempt) return;
@@ -1917,11 +1984,7 @@ function OnlineParty({
     channel
       .on("broadcast", { event: "room" }, receiveRealtimeMessage)
       .on("presence", { event: "leave" }, ({ key }) => {
-        if (key !== realtimeHostIdRef.current) return;
-        failRealtimeConnection(
-          "호스트가 방을 나갔습니다. 새 초대 링크를 받아 주세요.",
-          attempt,
-        );
+        handleRealtimePresenceLeave(key, attempt);
       })
       .subscribe((status) => {
         if (connectionAttemptRef.current !== attempt) return;
@@ -1981,9 +2044,10 @@ function OnlineParty({
     const next = playersRef.current
       .filter(
         (player) =>
-          player.id === localIdRef.current ||
-          Boolean(realtimeChannelRef.current) ||
-          connectionsRef.current.has(player.id),
+          player.connected &&
+          (player.id === localIdRef.current ||
+            Boolean(realtimeChannelRef.current) ||
+            connectionsRef.current.has(player.id)),
       )
       .map((player) => ({
         ...player,
@@ -2288,7 +2352,13 @@ function OnlineParty({
                 <div className={`lobby-slot ${player ? "slot-filled" : ""}`} key={index}>
                   <span>P{index + 1}</span>
                   <strong>{player?.name ?? "OPEN SLOT"}</strong>
-                  <em>{player ? (index === 0 ? "HOST" : "CONNECTED") : "WAITING"}</em>
+                  <em>
+                    {player
+                      ? player.id === hostId
+                        ? "HOST"
+                        : "CONNECTED"
+                      : "WAITING"}
+                  </em>
                 </div>
               );
             })}

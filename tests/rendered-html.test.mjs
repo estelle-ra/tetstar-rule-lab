@@ -56,6 +56,7 @@ test("ships without starter-only assets", async () => {
   const [
     packageJson,
     gameClient,
+    globalCss,
     authGate,
     profileDashboard,
     migration,
@@ -69,6 +70,7 @@ test("ships without starter-only assets", async () => {
     await Promise.all([
       readFile(new URL("../package.json", import.meta.url), "utf8"),
       readFile(new URL("../app/GameClient.tsx", import.meta.url), "utf8"),
+      readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
       readFile(new URL("../app/AuthGate.tsx", import.meta.url), "utf8"),
       readFile(
         new URL("../app/ProfileDashboard.tsx", import.meta.url),
@@ -143,8 +145,12 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /if \(connection\.open\) registerConnection\(\)/);
   assert.match(gameClient, /tetstar-room-\$\{code\.toLowerCase\(\)\}/);
   assert.match(gameClient, /type: "join-request"/);
+  assert.match(gameClient, /type: "host-transfer"/);
+  assert.match(gameClient, /handleRealtimePresenceLeave/);
+  assert.match(gameClient, /player\.id === hostId/);
   assert.match(gameClient, /REALTIME READY/);
   assert.match(gameClient, /SUPABASE REALTIME/);
+  assert.match(globalCss, /calc\(\(100dvh - 330px\) \/ 20\)/);
   assert.doesNotMatch(gameClient, /online-mode-label/);
   assert.match(gameClient, /GAME_THEMES/);
   assert.match(gameClient, /themes\/\$\{gameTheme\}\.webp/);
