@@ -1126,16 +1126,47 @@ function PartyChat({
   onSend: () => void;
 }) {
   const endRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
   }, [messages]);
 
+  useEffect(() => {
+    const focusChatWithEnter = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Enter" ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.isComposing
+      ) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.matches(
+          "input, textarea, select, button, [contenteditable='true']",
+        )
+      ) {
+        return;
+      }
+      event.preventDefault();
+      inputRef.current?.focus();
+    };
+    window.addEventListener("keydown", focusChatWithEnter);
+    return () => window.removeEventListener("keydown", focusChatWithEnter);
+  }, []);
+
   return (
     <section className="party-chat" aria-label="멀티플레이 채팅">
       <div className="party-chat-head">
         <strong>PARTY CHAT</strong>
-        <span>{messages.length ? `${messages.length} MESSAGES` : "CONNECTED"}</span>
+        <span>
+          {messages.length ? `${messages.length} MESSAGES` : "CONNECTED"}
+          <kbd>ENTER</kbd>
+        </span>
       </div>
       <div className="party-chat-log" aria-live="polite">
         {messages.length ? (
@@ -1163,6 +1194,7 @@ function PartyChat({
           aria-label="채팅 메시지"
           maxLength={180}
           placeholder="메시지 입력"
+          ref={inputRef}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -1863,6 +1895,7 @@ function OnlineParty({
       activeMatchIdRef.current = packet.matchId;
       setWinnerName("");
       setGarbageSignal({ id: 0, amount: 0 });
+      setInkSignal({ id: 0 });
       setInkedPlayers({});
       setPhase("playing");
     }
@@ -1892,6 +1925,7 @@ function OnlineParty({
       setSelectedTargetId("");
       setInkUsed(0);
       setAttackLogs([]);
+      setInkSignal({ id: 0 });
       setInkedPlayers({});
       setPhase("lobby");
     }
@@ -2273,6 +2307,7 @@ function OnlineParty({
   }, [canAutoJoin, defaultPlayerName, initialRoomCode]);
 
   const returnToLobby = () => {
+    setInkSignal({ id: 0 });
     setInkedPlayers({});
     if (roleRef.current !== "host") {
       setPhase("lobby");
@@ -2331,6 +2366,7 @@ function OnlineParty({
     setSelectedTargetId("");
     setInkUsed(0);
     setAttackLogs([]);
+    setInkSignal({ id: 0 });
     setInkedPlayers({});
     replacePlayers(next);
     setRoomError("");
@@ -2515,6 +2551,14 @@ function OnlineParty({
   const survivors = players.filter(
     (player) => player.alive && player.connected,
   ).length;
+  const standings =
+    phase === "ended"
+      ? [...players].sort((a, b) => {
+          if (a.name === winnerName) return -1;
+          if (b.name === winnerName) return 1;
+          return (b.snapshot?.score ?? 0) - (a.snapshot?.score ?? 0);
+        })
+      : [];
   const inviteCode = initialRoomCode
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
@@ -2764,56 +2808,12 @@ function OnlineParty({
     );
   }
 
-  if (phase === "ended") {
-    const standings = [...players].sort((a, b) => {
-      if (a.name === winnerName) return -1;
-      if (b.name === winnerName) return 1;
-      return (b.snapshot?.score ?? 0) - (a.snapshot?.score ?? 0);
-    });
-    return (
-      <section className="online-results">
-        <span className="eyebrow">MATCH COMPLETE</span>
-        <h2>{winnerName} WINS</h2>
-        <div className="result-list">
-          {standings.map((player, index) => (
-            <div key={player.id}>
-              <span>#{index + 1}</span>
-              <strong>{player.name}</strong>
-              <em>{player.snapshot?.lines ?? 0} LINES</em>
-              <em>{(player.snapshot?.score ?? 0).toLocaleString()} PTS</em>
-            </div>
-          ))}
-        </div>
-        <PartyChat
-          messages={chatMessages}
-          value={chatText}
-          onChange={setChatText}
-          onSend={sendChat}
-        />
-        <div className="result-actions">
-          {role === "host" && (
-            <button className="start-online" onClick={startMatch}>
-              REMATCH →
-            </button>
-          )}
-          <button className="return-lobby" onClick={returnToLobby}>
-            RETURN TO LOBBY
-          </button>
-          {role !== "host" && (
-            <div className="guest-waiting">
-              대기실에서 현재 접속 인원을 확인할 수 있습니다.
-            </div>
-          )}
-          <button className="leave-room" onClick={leaveRoom}>
-            LEAVE ROOM
-          </button>
-        </div>
-      </section>
-    );
-  }
-
   return (
-    <section className={`online-match ${isSpectating ? "online-spectating" : ""}`}>
+    <section
+      className={`online-match ${isSpectating ? "online-spectating" : ""} ${
+        phase === "ended" ? "online-ended" : ""
+      }`}
+    >
       <div className="online-match-bar">
         <div>
           <span>ROOM</span>
@@ -2884,19 +2884,35 @@ function OnlineParty({
       </div>
       <div className="online-arena">
         <div className="local-board-zone">
-          {localPlayer && !isSpectating ? (
-            <GameBoard
-              key={matchId}
-              player={localPlayer.name}
-              controls={SINGLE_CONTROLS}
-              rules={matchRules}
-              mode="versus"
-              garbage={garbageSignal}
-              ink={inkSignal}
-              onAttack={sendAttack}
-              onFinish={finishLocalPlayer}
-              onSnapshot={shareSnapshot}
-            />
+          {localPlayer && !localPlayer.spectating ? (
+            <>
+              <div
+                className={
+                  isSpectating && phase !== "ended"
+                    ? "preserved-local-board preserved-local-board-hidden"
+                    : "preserved-local-board"
+                }
+              >
+                <GameBoard
+                  key={matchId}
+                  player={localPlayer.name}
+                  controls={SINGLE_CONTROLS}
+                  rules={matchRules}
+                  mode="versus"
+                  garbage={garbageSignal}
+                  ink={inkSignal}
+                  onAttack={sendAttack}
+                  onFinish={finishLocalPlayer}
+                  onSnapshot={shareSnapshot}
+                />
+              </div>
+              {isSpectating && phase !== "ended" && (
+                <div className="spectator-banner">
+                  <span>SPECTATING</span>
+                  <strong>생존자의 플레이를 관전 중입니다.</strong>
+                </div>
+              )}
+            </>
           ) : (
             <div className="spectator-banner">
               <span>SPECTATING</span>
@@ -2954,6 +2970,61 @@ function OnlineParty({
           />
         </aside>
       </div>
+      {phase === "ended" && (
+        <div
+          aria-label="경기 결과"
+          aria-modal="true"
+          className="match-result-layer"
+          role="dialog"
+        >
+          <div className="result-block-burst" aria-hidden="true">
+            {["I", "O", "T", "S", "Z", "J", "L"].map((piece) => (
+              <i className={`piece-${piece}`} key={piece} />
+            ))}
+          </div>
+          <div className="match-result-card">
+            <span className="eyebrow">MATCH COMPLETE</span>
+            <div className="winner-star" aria-hidden="true">
+              ★
+            </div>
+            <p>VICTORY</p>
+            <h2>{winnerName}</h2>
+            <div className="result-list">
+              {standings.map((player, index) => (
+                <div
+                  className={index === 0 ? "result-winner" : ""}
+                  key={player.id}
+                >
+                  <span>#{index + 1}</span>
+                  <strong>{player.name}</strong>
+                  <em>{player.snapshot?.lines ?? 0} LINES</em>
+                  <em>
+                    {(player.snapshot?.score ?? 0).toLocaleString()} PTS
+                  </em>
+                </div>
+              ))}
+            </div>
+            <div className="result-actions">
+              {role === "host" && (
+                <button className="start-online" onClick={startMatch}>
+                  REMATCH →
+                </button>
+              )}
+              <button className="return-lobby" onClick={returnToLobby}>
+                RETURN TO LOBBY
+              </button>
+              <button className="leave-room" onClick={leaveRoom}>
+                LEAVE ROOM
+              </button>
+            </div>
+            {role !== "host" && (
+              <div className="guest-waiting">
+                호스트가 재경기를 시작하거나 대기실로 돌아갈 수 있습니다.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

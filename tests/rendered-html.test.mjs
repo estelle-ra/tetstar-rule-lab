@@ -165,6 +165,11 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /repeatHandles\.current\.get\(token\) !== handle/);
   assert.match(gameClient, /type: "ink-state"/);
   assert.match(gameClient, /remote-ink-overlay/);
+  assert.match(gameClient, /focusChatWithEnter/);
+  assert.match(gameClient, /inputRef\.current\?\.focus\(\)/);
+  assert.match(gameClient, /setInkSignal\(\{ id: 0 \}\)/);
+  assert.match(gameClient, /className="match-result-layer"/);
+  assert.match(gameClient, /MATCH COMPLETE/);
   assert.match(gameClient, /HORIZONTAL_DAS_MS = 125/);
   assert.match(gameClient, /JOYSTICK_DEADZONE = 22/);
   assert.match(gameClient, /REALTIME READY/);
@@ -172,6 +177,8 @@ test("ships without starter-only assets", async () => {
   assert.match(globalCss, /calc\(\(100dvh - 330px\) \/ 20\)/);
   assert.match(globalCss, /env\(safe-area-inset-bottom\)/);
   assert.match(globalCss, /\.mobile-opponent-strip/);
+  assert.match(globalCss, /grid-template-areas: "hold board next"/);
+  assert.match(globalCss, /\.match-result-card/);
   assert.doesNotMatch(gameClient, /online-mode-label/);
   assert.match(gameClient, /GAME_THEMES/);
   assert.match(gameClient, /themes\/\$\{gameTheme\}\.webp/);
