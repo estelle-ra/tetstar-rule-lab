@@ -1865,6 +1865,20 @@ button.online-choice:hover {
   font: normal 9px monospace;
 }
 
+.remote-player-inked {
+  border-color: #ff78a7;
+  box-shadow: 0 0 0 2px rgba(255, 120, 167, 0.16);
+}
+
+.remote-player-inked .remote-player-head em {
+  color: #ff8eb5;
+}
+
+.remote-board-wrap {
+  overflow: hidden;
+  position: relative;
+}
+
 .remote-board {
   background: #060708;
   border: 2px solid #272b31;
@@ -1877,6 +1891,37 @@ button.online-choice:hover {
   background: rgba(255, 255, 255, 0.012);
   border: 1px solid rgba(255, 255, 255, 0.02);
   display: block;
+}
+
+.remote-ink-overlay {
+  animation: remote-ink-hit 4.2s ease-out forwards;
+  background: rgba(0, 0, 0, 0.18);
+  inset: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+}
+
+.remote-ink-overlay i {
+  background: #010204;
+  border-radius: 47% 53% 42% 58%;
+  box-shadow:
+    -8px 6px 0 3px #010204,
+    10px 5px 0 5px #010204,
+    4px -8px 0 2px #010204;
+  height: 18%;
+  position: absolute;
+  width: 31%;
+}
+
+.remote-ink-overlay i:nth-child(1) { left: 10%; top: 18%; transform: rotate(18deg); }
+.remote-ink-overlay i:nth-child(2) { right: 9%; top: 42%; transform: rotate(-14deg); }
+.remote-ink-overlay i:nth-child(3) { bottom: 12%; left: 30%; transform: rotate(28deg); }
+
+@keyframes remote-ink-hit {
+  0% { opacity: 0; transform: scale(0.86); }
+  9%, 76% { opacity: 0.94; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.03); }
 }
 
 .remote-stats {
@@ -3117,6 +3162,15 @@ footer {
 
   .mobile-opponent-card.strip-selected {
     border-color: var(--orange);
+  }
+
+  .mobile-opponent-card.card-inked {
+    background: #24131a;
+    border-color: #ff78a7;
+  }
+
+  .mobile-opponent-card.card-inked em {
+    color: #ff8eb5;
   }
 
   .screen-multiplayer-playing .opponents-zone {

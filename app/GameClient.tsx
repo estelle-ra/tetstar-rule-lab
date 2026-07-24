@@ -127,6 +127,7 @@ type RoomPacket =
   | { type: "target-select"; targetId: string }
   | { type: "item-use"; item: "ink"; targetId: string }
   | { type: "ink"; id: number }
+  | { type: "ink-state"; playerId: string; until: number }
   | { type: "attack-log"; log: AttackLog }
   | { type: "chat-submit"; text: string }
   | { type: "chat"; message: ChatMessage }
@@ -154,6 +155,12 @@ const HEIGHT = 20;
 const LOCK_DELAY_MS = 350;
 const MAX_LOCK_RESETS = 8;
 const MAX_GROUNDED_MS = 1800;
+const HORIZONTAL_DAS_MS = 125;
+const HORIZONTAL_ARR_MS = 46;
+const JOYSTICK_DEADZONE = 22;
+const JOYSTICK_HORIZONTAL_DAS_MS = 145;
+const JOYSTICK_HORIZONTAL_ARR_MS = 56;
+const INK_EFFECT_MS = 4200;
 const PIECES: PieceName[] = ["I", "J", "L", "O", "S", "T", "Z"];
 const GAME_THEMES: GameTheme[] = ["megacity", "orbit", "refinery"];
 const CONFIGURED_SITE_URL = process.env.NEXT_PUBLIC_SITE_URL;
@@ -768,8 +775,8 @@ function GameBoard({
         startRepeat(
           `key:${event.code}`,
           action,
-          action === "down" ? 70 : 105,
-          action === "down" ? 32 : 38,
+          action === "down" ? 70 : HORIZONTAL_DAS_MS,
+          action === "down" ? 32 : HORIZONTAL_ARR_MS,
         );
       } else {
         actionRef.current(action);
@@ -829,10 +836,10 @@ function GameBoard({
     setJoystickVector({ x, y });
 
     let nextDirection: GameAction | null = null;
-    if (distance >= 18) {
-      if (Math.abs(x) > Math.abs(y) * 0.9) {
+    if (distance >= JOYSTICK_DEADZONE) {
+      if (Math.abs(x) > Math.abs(y) * 1.05) {
         nextDirection = x < 0 ? "left" : "right";
-      } else if (y > 12) {
+      } else if (y > 16) {
         nextDirection = "down";
       }
     }
@@ -843,8 +850,8 @@ function GameBoard({
       startRepeat(
         "joystick",
         nextDirection,
-        nextDirection === "down" ? 90 : 125,
-        nextDirection === "down" ? 38 : 48,
+        nextDirection === "down" ? 95 : JOYSTICK_HORIZONTAL_DAS_MS,
+        nextDirection === "down" ? 40 : JOYSTICK_HORIZONTAL_ARR_MS,
       );
     }
   };
@@ -1173,6 +1180,7 @@ function RemoteBoard({
   selected,
   targeting,
   hotkey,
+  inked,
   inkRemaining,
   onSelect,
   onInk,
@@ -1182,6 +1190,7 @@ function RemoteBoard({
   selected?: boolean;
   targeting?: boolean;
   hotkey?: number;
+  inked?: boolean;
   inkRemaining?: number;
   onSelect?: () => void;
   onInk?: () => void;
@@ -1189,7 +1198,7 @@ function RemoteBoard({
   const cells = player.snapshot?.cells ?? Array(HEIGHT * WIDTH).fill("");
   return (
     <article
-      className={`remote-player ${!player.alive ? "remote-player-out" : ""} ${isSelf ? "remote-player-self" : ""} ${selected ? "remote-player-selected" : ""} ${targeting ? "remote-player-targetable" : ""}`}
+      className={`remote-player ${!player.alive ? "remote-player-out" : ""} ${isSelf ? "remote-player-self" : ""} ${selected ? "remote-player-selected" : ""} ${targeting ? "remote-player-targetable" : ""} ${inked ? "remote-player-inked" : ""}`}
       onClick={targeting ? onSelect : undefined}
     >
       <div className="remote-player-head">
@@ -1197,12 +1206,32 @@ function RemoteBoard({
           {hotkey && <kbd>{hotkey}</kbd>}
           P{player.slot + 1} {player.name}
         </span>
-        <em>{player.alive ? (player.connected ? "LIVE" : "OFFLINE") : "OUT"}</em>
+        <em>
+          {player.alive
+            ? player.connected
+              ? inked
+                ? "INKED"
+                : "LIVE"
+              : "OFFLINE"
+            : "OUT"}
+        </em>
       </div>
-      <div className="remote-board" aria-label={`${player.name} 상대 보드`}>
-        {cells.slice(0, HEIGHT * WIDTH).map((cell, index) => (
-          <i className={cell ? `piece-${cell}` : ""} key={index} />
-        ))}
+      <div className="remote-board-wrap">
+        <div className="remote-board" aria-label={`${player.name} 상대 보드`}>
+          {cells.slice(0, HEIGHT * WIDTH).map((cell, index) => (
+            <i className={cell ? `piece-${cell}` : ""} key={index} />
+          ))}
+        </div>
+        {inked && (
+          <div
+            className="remote-ink-overlay"
+            aria-label={`${player.name} 먹물 효과 적용 중`}
+          >
+            <i />
+            <i />
+            <i />
+          </div>
+        )}
       </div>
       <div className="remote-stats">
         <span>{player.snapshot?.lines ?? 0} LINES</span>
@@ -1266,6 +1295,7 @@ function OnlineParty({
   const [matchRules, setMatchRules] = useState(rules);
   const [garbageSignal, setGarbageSignal] = useState({ id: 0, amount: 0 });
   const [inkSignal, setInkSignal] = useState({ id: 0 });
+  const [inkedPlayers, setInkedPlayers] = useState<Record<string, number>>({});
   const [attackLogs, setAttackLogs] = useState<AttackLog[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState("");
   const [inkUsed, setInkUsed] = useState(0);
@@ -1340,6 +1370,21 @@ function OnlineParty({
     window.setTimeout(() => {
       setAttackLogs((current) => current.filter((item) => item.id !== log.id));
     }, 4200);
+  };
+
+  const markPlayerInked = (playerId: string, until: number) => {
+    setInkedPlayers((current) => ({ ...current, [playerId]: until }));
+    window.setTimeout(
+      () => {
+        setInkedPlayers((current) => {
+          if (current[playerId] !== until) return current;
+          const next = { ...current };
+          delete next[playerId];
+          return next;
+        });
+      },
+      Math.max(0, until - Date.now()),
+    );
   };
 
   const createChatMessage = (
@@ -1521,11 +1566,14 @@ function OnlineParty({
     if (used >= rulesRef.current.inkLimit) return;
     itemUsesRef.current.set(fromId, used + 1);
     const id = Date.now() + used;
+    const until = Date.now() + INK_EFFECT_MS;
     if (target.id === localIdRef.current) {
       setInkSignal({ id });
     } else {
       sendRealtimePacket({ type: "ink", id }, target.id);
     }
+    markPlayerInked(target.id, until);
+    broadcast({ type: "ink-state", playerId: target.id, until });
     const log: AttackLog = {
       id: `ink-${id}-${fromId}-${target.id}`,
       fromName: sender.name,
@@ -1815,6 +1863,7 @@ function OnlineParty({
       activeMatchIdRef.current = packet.matchId;
       setWinnerName("");
       setGarbageSignal({ id: 0, amount: 0 });
+      setInkedPlayers({});
       setPhase("playing");
     }
     if (packet.type === "snapshot" && packet.playerId) {
@@ -1825,6 +1874,9 @@ function OnlineParty({
     }
     if (packet.type === "ink") {
       setInkSignal({ id: packet.id });
+    }
+    if (packet.type === "ink-state") {
+      markPlayerInked(packet.playerId, packet.until);
     }
     if (packet.type === "attack-log") {
       appendAttackLog(packet.log);
@@ -1840,6 +1892,7 @@ function OnlineParty({
       setSelectedTargetId("");
       setInkUsed(0);
       setAttackLogs([]);
+      setInkedPlayers({});
       setPhase("lobby");
     }
     if (packet.type === "end") {
@@ -2220,6 +2273,7 @@ function OnlineParty({
   }, [canAutoJoin, defaultPlayerName, initialRoomCode]);
 
   const returnToLobby = () => {
+    setInkedPlayers({});
     if (roleRef.current !== "host") {
       setPhase("lobby");
       return;
@@ -2277,6 +2331,7 @@ function OnlineParty({
     setSelectedTargetId("");
     setInkUsed(0);
     setAttackLogs([]);
+    setInkedPlayers({});
     replacePlayers(next);
     setRoomError("");
     setWinnerName("");
@@ -2431,6 +2486,7 @@ function OnlineParty({
     setSelectedTargetId("");
     setInkUsed(0);
     setInkSignal({ id: 0 });
+    setInkedPlayers({});
     manualTargetsRef.current.clear();
     itemUsesRef.current.clear();
     chatMessagesRef.current = [];
@@ -2785,7 +2841,7 @@ function OnlineParty({
           <article
             className={`mobile-opponent-card ${
               player.id === selectedTargetId ? "strip-selected" : ""
-            }`}
+            } ${inkedPlayers[player.id] ? "card-inked" : ""}`}
             key={player.id}
           >
             <button
@@ -2802,9 +2858,11 @@ function OnlineParty({
               <span>{player.name}</span>
               <em>
                 {player.alive
-                  ? player.id === selectedTargetId
-                    ? "TARGET"
-                    : "LIVE"
+                  ? inkedPlayers[player.id]
+                    ? "INKED"
+                    : player.id === selectedTargetId
+                      ? "TARGET"
+                      : "LIVE"
                   : "OUT"}
               </em>
             </button>
@@ -2866,6 +2924,7 @@ function OnlineParty({
                 player={player}
                 key={player.id}
                 hotkey={index + 1}
+                inked={Boolean(inkedPlayers[player.id])}
                 selected={player.id === selectedTargetId}
                 targeting={
                   !isSpectating &&

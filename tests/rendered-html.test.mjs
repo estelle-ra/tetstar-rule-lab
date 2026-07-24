@@ -163,6 +163,10 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /Numpad/);
   assert.match(gameClient, /event\.code !== "KeyI"/);
   assert.match(gameClient, /repeatHandles\.current\.get\(token\) !== handle/);
+  assert.match(gameClient, /type: "ink-state"/);
+  assert.match(gameClient, /remote-ink-overlay/);
+  assert.match(gameClient, /HORIZONTAL_DAS_MS = 125/);
+  assert.match(gameClient, /JOYSTICK_DEADZONE = 22/);
   assert.match(gameClient, /REALTIME READY/);
   assert.match(gameClient, /SUPABASE REALTIME/);
   assert.match(globalCss, /calc\(\(100dvh - 330px\) \/ 20\)/);
@@ -185,7 +189,7 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /aria-label="왼손 이동 조이스틱"/);
   assert.match(gameClient, /className="joystick-base"/);
   assert.match(gameClient, /const radius = 46/);
-  assert.match(gameClient, /distance >= 18/);
+  assert.match(gameClient, /distance >= JOYSTICK_DEADZONE/);
   assert.match(gameClient, /stepDownRef\.current\(\)/);
   assert.match(gameClient, /rules: rulesRef\.current/);
   assert.match(gameClient, /온라인 대전은 방장의 설정을 모든 참가자에게 동일하게 적용합니다/);
