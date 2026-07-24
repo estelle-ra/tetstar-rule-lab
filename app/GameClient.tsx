@@ -43,6 +43,9 @@ type Piece = {
   y: number;
 };
 
+type TSpinKind = "full" | "mini" | null;
+type KickOffset = readonly [number, number];
+
 type Controls = {
   left: string;
   right: string;
@@ -121,7 +124,13 @@ type RoomPacket =
       messages: ChatMessage[];
     }
   | { type: "roster"; players: RoomPlayer[]; started: boolean; rules: Rules }
-  | { type: "start"; matchId: number; players: RoomPlayer[]; rules: Rules }
+  | {
+      type: "start";
+      matchId: number;
+      startAt: number;
+      players: RoomPlayer[];
+      rules: Rules;
+    }
   | { type: "attack"; amount: number }
   | { type: "garbage"; id: number; amount: number }
   | { type: "target-select"; targetId: string }
@@ -155,11 +164,11 @@ const HEIGHT = 20;
 const LOCK_DELAY_MS = 350;
 const MAX_LOCK_RESETS = 8;
 const MAX_GROUNDED_MS = 1800;
-const HORIZONTAL_DAS_MS = 125;
-const HORIZONTAL_ARR_MS = 46;
+const HORIZONTAL_DAS_MS = 140;
+const HORIZONTAL_ARR_MS = 54;
 const JOYSTICK_DEADZONE = 22;
-const JOYSTICK_HORIZONTAL_DAS_MS = 145;
-const JOYSTICK_HORIZONTAL_ARR_MS = 56;
+const JOYSTICK_HORIZONTAL_DAS_MS = 165;
+const JOYSTICK_HORIZONTAL_ARR_MS = 66;
 const INK_EFFECT_MS = 4200;
 const PIECES: PieceName[] = ["I", "J", "L", "O", "S", "T", "Z"];
 const GAME_THEMES: GameTheme[] = ["megacity", "orbit", "refinery"];
@@ -209,6 +218,29 @@ const SHAPES: Record<PieceName, number[][]> = {
     [0, 1, 1],
     [0, 0, 0],
   ],
+};
+
+// SRS offsets converted to this board's coordinate system, where +Y is down.
+const JLSTZ_KICKS: Record<string, readonly KickOffset[]> = {
+  "0>1": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  "1>0": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  "1>2": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  "2>1": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  "2>3": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  "3>2": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  "3>0": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  "0>3": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+};
+
+const I_KICKS: Record<string, readonly KickOffset[]> = {
+  "0>1": [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  "1>0": [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  "1>2": [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+  "2>1": [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  "2>3": [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  "3>2": [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  "3>0": [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  "0>3": [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
 };
 
 const DEFAULT_RULES: Rules = {
@@ -265,25 +297,44 @@ function collides(board: Board, piece: Piece): boolean {
   );
 }
 
-function isTSpin(board: Board, piece: Piece, lastActionWasRotation: boolean) {
-  if (piece.type !== "T" || !lastActionWasRotation) return false;
+function occupiedCorner(board: Board, x: number, y: number) {
+  return (
+    x < 0 ||
+    x >= WIDTH ||
+    y < 0 ||
+    y >= HEIGHT ||
+    board[y][x] !== null
+  );
+}
+
+function detectTSpin(
+  board: Board,
+  piece: Piece,
+  lastActionWasRotation: boolean,
+  lastKickIndex: number,
+): TSpinKind {
+  if (piece.type !== "T" || !lastActionWasRotation) return null;
   const centerX = piece.x + 1;
   const centerY = piece.y + 1;
-  const corners = [
-    [centerX - 1, centerY - 1],
-    [centerX + 1, centerY - 1],
-    [centerX - 1, centerY + 1],
-    [centerX + 1, centerY + 1],
-  ];
-  const occupiedCorners = corners.filter(
-    ([x, y]) =>
-      x < 0 ||
-      x >= WIDTH ||
-      y < 0 ||
-      y >= HEIGHT ||
-      board[y][x] !== null,
-  ).length;
-  return occupiedCorners >= 3;
+  const corners = {
+    topLeft: occupiedCorner(board, centerX - 1, centerY - 1),
+    topRight: occupiedCorner(board, centerX + 1, centerY - 1),
+    bottomLeft: occupiedCorner(board, centerX - 1, centerY + 1),
+    bottomRight: occupiedCorner(board, centerX + 1, centerY + 1),
+  };
+  if (Object.values(corners).filter(Boolean).length < 3) return null;
+
+  const frontCorners =
+    piece.rotation === 0
+      ? [corners.topLeft, corners.topRight]
+      : piece.rotation === 1
+        ? [corners.topRight, corners.bottomRight]
+        : piece.rotation === 2
+          ? [corners.bottomLeft, corners.bottomRight]
+          : [corners.topLeft, corners.bottomLeft];
+
+  // The fifth SRS kick upgrades an otherwise-mini result to a full T-Spin.
+  return frontCorners.every(Boolean) || lastKickIndex === 4 ? "full" : "mini";
 }
 
 function shuffledBag(): PieceName[] {
@@ -375,6 +426,12 @@ function GameBoard({
   const [status, setStatus] = useState<Status>("playing");
   const [seconds, setSeconds] = useState(mode === "blitz" ? 120 : 0);
   const [flash, setFlash] = useState("");
+  const [clearEffect, setClearEffect] = useState<{
+    id: number;
+    lines: number;
+  } | null>(null);
+  const [impactId, setImpactId] = useState(0);
+  const [windowFocused, setWindowFocused] = useState(true);
   const [joystickVector, setJoystickVector] = useState({ x: 0, y: 0 });
   const [joystickOrigin, setJoystickOrigin] = useState({ x: 0, y: 0 });
   const [joystickActive, setJoystickActive] = useState(false);
@@ -390,12 +447,29 @@ function GameBoard({
   const groundedLimitRef = useRef<number | null>(null);
   const lockResetCount = useRef(0);
   const lastActionWasRotation = useRef(false);
+  const lastRotationKickIndex = useRef(-1);
   const joystickPointer = useRef<number | null>(null);
   const joystickDirection = useRef<GameAction | null>(null);
   const joystickOriginRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     startedAt.current = Date.now();
+  }, []);
+
+  useEffect(() => {
+    const updateFocus = () =>
+      setWindowFocused(
+        document.visibilityState === "visible" && document.hasFocus(),
+      );
+    window.addEventListener("focus", updateFocus);
+    window.addEventListener("blur", updateFocus);
+    document.addEventListener("visibilitychange", updateFocus);
+    updateFocus();
+    return () => {
+      window.removeEventListener("focus", updateFocus);
+      window.removeEventListener("blur", updateFocus);
+      document.removeEventListener("visibilitychange", updateFocus);
+    };
   }, []);
 
   const finish = useCallback(
@@ -411,11 +485,17 @@ function GameBoard({
 
   const lockPiece = useCallback(
     (piece: Piece) => {
-      const tSpin = isTSpin(board, piece, lastActionWasRotation.current);
+      const tSpinKind = detectTSpin(
+        board,
+        piece,
+        lastActionWasRotation.current,
+        lastRotationKickIndex.current,
+      );
       lockDeadlineRef.current = null;
       groundedLimitRef.current = null;
       lockResetCount.current = 0;
       lastActionWasRotation.current = false;
+      lastRotationKickIndex.current = -1;
       const merged = board.map((row) => [...row]);
       let overflow = false;
       pieceCells(piece).forEach(([x, y]) => {
@@ -438,9 +518,13 @@ function GameBoard({
       const nextCombo = cleared ? combo + 1 : -1;
       const baseScores = [0, 100, 300, 500, 800];
       const tSpinScores = [400, 800, 1200, 1600];
-      const clearScore = tSpin
-        ? (tSpinScores[cleared] ?? 1600)
-        : (baseScores[cleared] ?? 1200);
+      const miniTSpinScores = [100, 200, 400, 600];
+      const clearScore =
+        tSpinKind === "full"
+          ? (tSpinScores[cleared] ?? 1600)
+          : tSpinKind === "mini"
+            ? (miniTSpinScores[cleared] ?? 600)
+            : (baseScores[cleared] ?? 1200);
 
       setBoard(cleaned);
       setActive(nextPiece);
@@ -455,24 +539,47 @@ function GameBoard({
           (cleared ? Math.max(0, nextCombo) * 50 : 0),
       );
 
-      if (cleared || tSpin) {
-        const attackBase = tSpin
-          ? ([0, 2, 4, 6][cleared] ?? 6)
-          : ([0, 0, 1, 2, 4][cleared] ?? 4);
+      if (cleared) {
+        const effect = { id: Date.now(), lines: cleared };
+        setClearEffect(effect);
+        window.setTimeout(
+          () =>
+            setClearEffect((current) =>
+              current?.id === effect.id ? null : current,
+            ),
+          760,
+        );
+      }
+
+      if (cleared || tSpinKind) {
+        const attackBase =
+          tSpinKind === "full"
+            ? ([0, 2, 4, 6][cleared] ?? 6)
+            : tSpinKind === "mini"
+              ? ([0, 0, 1, 2][cleared] ?? 2)
+              : ([0, 0, 1, 2, 4][cleared] ?? 4);
         const attack = Math.max(
           0,
           Math.round((attackBase + Math.max(0, nextCombo - 1)) * rules.attack),
         );
         if (attack > 0) onAttack?.(attack);
         const tSpinNames = ["T-SPIN!", "T-SPIN SINGLE!", "T-SPIN DOUBLE!", "T-SPIN TRIPLE!"];
+        const miniTSpinNames = [
+          "T-SPIN MINI!",
+          "T-SPIN MINI SINGLE!",
+          "T-SPIN MINI DOUBLE!",
+          "T-SPIN MINI!",
+        ];
         setFlash(
-          tSpin
+          tSpinKind === "full"
             ? (tSpinNames[cleared] ?? "T-SPIN!")
+            : tSpinKind === "mini"
+              ? (miniTSpinNames[cleared] ?? "T-SPIN MINI!")
             : cleared === 4
               ? "QUAD!"
               : `${cleared} LINE`,
         );
-        window.setTimeout(() => setFlash(""), tSpin ? 900 : 620);
+        window.setTimeout(() => setFlash(""), tSpinKind ? 900 : 620);
       }
 
       if (mode === "sprint" && nextLines >= 40) {
@@ -610,6 +717,7 @@ function GameBoard({
       if (!collides(board, moved)) {
         refreshLockDelay();
         lastActionWasRotation.current = false;
+        lastRotationKickIndex.current = -1;
         setActive(moved);
       }
     },
@@ -618,15 +726,26 @@ function GameBoard({
 
   const rotate = useCallback(
     (direction: 1 | -1) => {
+      const fromRotation = active.rotation;
+      const toRotation = (active.rotation + direction + 4) % 4;
       const rotated = {
         ...active,
-        rotation: (active.rotation + direction + 4) % 4,
+        rotation: toRotation,
       };
-      for (const kick of [0, -1, 1, -2, 2]) {
-        const candidate = { ...rotated, x: rotated.x + kick };
+      const kickKey = `${fromRotation}>${toRotation}`;
+      const kicks =
+        active.type === "O"
+          ? ([[0, 0]] as const)
+          : active.type === "I"
+            ? (I_KICKS[kickKey] ?? [[0, 0]])
+            : (JLSTZ_KICKS[kickKey] ?? [[0, 0]]);
+      for (let index = 0; index < kicks.length; index += 1) {
+        const [x, y] = kicks[index];
+        const candidate = { ...rotated, x: rotated.x + x, y: rotated.y + y };
         if (!collides(board, candidate)) {
           refreshLockDelay();
           lastActionWasRotation.current = true;
+          lastRotationKickIndex.current = index;
           setActive(candidate);
           return;
         }
@@ -653,6 +772,13 @@ function GameBoard({
       distance += 1;
     }
     setScore((value) => value + distance * 2);
+    const nextImpactId = Date.now();
+    setImpactId(nextImpactId);
+    window.setTimeout(
+      () =>
+        setImpactId((current) => (current === nextImpactId ? 0 : current)),
+      260,
+    );
     lockPiece(dropped);
   }, [active, board, clearRepeatHandles, lockPiece]);
 
@@ -662,6 +788,7 @@ function GameBoard({
     groundedLimitRef.current = null;
     lockResetCount.current = 0;
     lastActionWasRotation.current = false;
+    lastRotationKickIndex.current = -1;
     if (held) {
       setHeld(active.type);
       setActive(spawn(held));
@@ -953,7 +1080,7 @@ function GameBoard({
           </div>
         </aside>
 
-        <div className="board-shell">
+        <div className={`board-shell ${impactId ? "board-impact" : ""}`}>
           <div className="board" role="grid" aria-label={`${player} 게임 보드`}>
             {rendered.flatMap((row, y) =>
               row.map((cell, x) => (
@@ -965,6 +1092,63 @@ function GameBoard({
             )}
           </div>
           {flash && <div className="line-flash">{flash}</div>}
+          {impactId > 0 && (
+            <div className="hard-drop-impact" aria-hidden="true" key={impactId}>
+              {Array.from({ length: 10 }, (_, index) => (
+                <i
+                  key={index}
+                  style={
+                    {
+                      "--impact-x": `${(index - 4.5) * 17}px`,
+                      "--impact-delay": `${(index % 3) * 18}ms`,
+                    } as CSSProperties
+                  }
+                >
+                  ✦
+                </i>
+              ))}
+            </div>
+          )}
+          {clearEffect && (
+            <div
+              aria-hidden="true"
+              className={`clear-particles clear-particles-${clearEffect.lines}`}
+              key={clearEffect.id}
+            >
+              {Array.from(
+                { length: 14 + clearEffect.lines * 8 },
+                (_, index) => {
+                  const angle =
+                    ((index * 137.5 + clearEffect.lines * 23) * Math.PI) / 180;
+                  const distance =
+                    48 + (index % 7) * 13 + clearEffect.lines * 10;
+                  const particlePieces: PieceName[] = [
+                    "I",
+                    "J",
+                    "L",
+                    "O",
+                    "S",
+                    "T",
+                    "Z",
+                  ];
+                  return (
+                    <i
+                      className={`piece-${particlePieces[index % particlePieces.length]}`}
+                      key={index}
+                      style={
+                        {
+                          "--particle-x": `${Math.cos(angle) * distance}px`,
+                          "--particle-y": `${Math.sin(angle) * distance}px`,
+                          "--particle-delay": `${(index % 6) * 16}ms`,
+                          "--particle-size": `${4 + (index % 4) * 2}px`,
+                        } as CSSProperties
+                      }
+                    />
+                  );
+                },
+              )}
+            </div>
+          )}
           {Boolean(ink?.id) && status === "playing" && (
             <div
               className="ink-overlay"
@@ -991,6 +1175,12 @@ function GameBoard({
               <span>
                 {status === "paused" ? "ESC로 계속" : `${lines} lines · ${score} pts`}
               </span>
+            </div>
+          )}
+          {!windowFocused && status === "playing" && (
+            <div className="focus-warning" aria-live="polite">
+              <strong>OUT OF FOCUS</strong>
+              <span>CLICK THE GAME TO RESUME INPUT</span>
             </div>
           )}
         </div>
@@ -1213,6 +1403,16 @@ function PartyChat({
           ref={inputRef}
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.nativeEvent.isComposing &&
+              !cleanChatText(value)
+            ) {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
         />
         <button type="submit" disabled={!cleanChatText(value)}>
           SEND
@@ -1250,9 +1450,11 @@ function RemoteBoard({
       onClick={targeting ? onSelect : undefined}
     >
       <div className="remote-player-head">
-        <span>
-          {hotkey && <kbd>{hotkey}</kbd>}
-          P{player.slot + 1} {player.name}
+        <span className="remote-player-identity">
+          {hotkey && <kbd aria-label={`선수 ${hotkey}번 단축키`}>{hotkey}</kbd>}
+          <span className="remote-player-name">
+            P{player.slot + 1} {player.name}
+          </span>
         </span>
         <em>
           {player.alive
@@ -1328,7 +1530,7 @@ function OnlineParty({
   onMatchResult: (result: GameResult) => void | Promise<void>;
 }) {
   const [phase, setPhaseState] = useState<
-    "entry" | "connecting" | "lobby" | "playing" | "ended"
+    "entry" | "connecting" | "lobby" | "countdown" | "playing" | "ended"
   >("entry");
   const [role, setRole] = useState<"host" | "guest" | null>(null);
   const [playerName, setPlayerName] = useState(defaultPlayerName);
@@ -1349,6 +1551,7 @@ function OnlineParty({
   const [inkUsed, setInkUsed] = useState(0);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatText, setChatText] = useState("");
+  const [countdownValue, setCountdownValue] = useState(3);
   const [inviteStatus, setInviteStatus] = useState("COPY INVITE LINK");
   const [manualInviteJoin, setManualInviteJoin] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("");
@@ -1366,6 +1569,7 @@ function OnlineParty({
   const autoJoinAttemptedRef = useRef(false);
   const connectionAttemptRef = useRef(0);
   const connectionTimeoutRef = useRef<number | null>(null);
+  const countdownTimerRef = useRef<number | null>(null);
   const activeMatchIdRef = useRef(0);
   const resultMatchIdRef = useRef(0);
   const targetCursor = useRef(0);
@@ -1381,11 +1585,17 @@ function OnlineParty({
   }, [defaultPlayerName]);
 
   useEffect(() => {
-    onPlayingChange(phase === "playing");
+    onPlayingChange(phase === "playing" || phase === "countdown");
   }, [onPlayingChange, phase]);
 
   useEffect(() => {
-    if (roleRef.current === "guest" || phaseRef.current === "playing") return;
+    if (
+      roleRef.current === "guest" ||
+      phaseRef.current === "playing" ||
+      phaseRef.current === "countdown"
+    ) {
+      return;
+    }
     rulesRef.current = rules;
     setMatchRules(rules);
   }, [rules]);
@@ -1393,6 +1603,30 @@ function OnlineParty({
   const setPhase = (next: typeof phase) => {
     phaseRef.current = next;
     setPhaseState(next);
+  };
+
+  const clearCountdown = () => {
+    if (countdownTimerRef.current !== null) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+  };
+
+  const beginCountdown = (startAt: number) => {
+    clearCountdown();
+    setPhase("countdown");
+    const tick = () => {
+      const remaining = Math.ceil((startAt - Date.now()) / 1000);
+      if (remaining <= 0) {
+        clearCountdown();
+        setCountdownValue(0);
+        setPhase("playing");
+        return;
+      }
+      setCountdownValue(Math.min(3, remaining));
+    };
+    tick();
+    countdownTimerRef.current = window.setInterval(tick, 80);
   };
 
   const clearConnectionTimeout = () => {
@@ -1482,7 +1716,8 @@ function OnlineParty({
     broadcast({
       type: "roster",
       players: next,
-      started: phaseRef.current === "playing",
+      started:
+        phaseRef.current === "playing" || phaseRef.current === "countdown",
       rules: rulesRef.current,
     });
   };
@@ -1513,9 +1748,12 @@ function OnlineParty({
     if (survivors.length > 1 || next.length < 2) return;
     const winner =
       survivors[0] ??
-      [...next].sort(
-        (a, b) => (b.snapshot?.score ?? 0) - (a.snapshot?.score ?? 0),
-      )[0];
+      next
+        .filter((player) => !player.spectating)
+        .sort(
+          (a, b) => (b.snapshot?.score ?? 0) - (a.snapshot?.score ?? 0),
+        )[0];
+    if (!winner) return;
     const finalPlayers = next.map((player) =>
       player.id === winner.id ? { ...player, alive: true } : player,
     );
@@ -1641,7 +1879,9 @@ function OnlineParty({
             type: "welcome",
             selfId: senderId,
             players: playersRef.current,
-            started: phaseRef.current === "playing",
+            started:
+              phaseRef.current === "playing" ||
+              phaseRef.current === "countdown",
             rules: rulesRef.current,
             messages: chatMessagesRef.current,
           },
@@ -1658,6 +1898,7 @@ function OnlineParty({
       }
       if (
         phaseRef.current !== "lobby" &&
+        phaseRef.current !== "countdown" &&
         phaseRef.current !== "playing" &&
         phaseRef.current !== "ended"
       ) {
@@ -1668,7 +1909,8 @@ function OnlineParty({
         return;
       }
       const joiningAsSpectator = phaseRef.current !== "lobby";
-      const matchIsLive = phaseRef.current === "playing";
+      const matchIsLive =
+        phaseRef.current === "playing" || phaseRef.current === "countdown";
       const occupied = new Set(playersRef.current.map((player) => player.slot));
       const slot = Array.from({ length: 8 }, (_, index) => index).find(
         (index) => !occupied.has(index),
@@ -1898,7 +2140,10 @@ function OnlineParty({
     }
     if (packet.type === "roster") {
       replacePlayers(packet.players);
-      if (phaseRef.current !== "playing") {
+      if (
+        phaseRef.current !== "playing" &&
+        phaseRef.current !== "countdown"
+      ) {
         rulesRef.current = packet.rules;
         setMatchRules(packet.rules);
       }
@@ -1913,7 +2158,7 @@ function OnlineParty({
       setGarbageSignal({ id: 0, amount: 0 });
       setInkSignal({ id: 0 });
       setInkedPlayers({});
-      setPhase("playing");
+      beginCountdown(packet.startAt);
     }
     if (packet.type === "snapshot" && packet.playerId) {
       updateSnapshot(packet.playerId, packet.snapshot);
@@ -1934,6 +2179,7 @@ function OnlineParty({
       appendChat(packet.message);
     }
     if (packet.type === "lobby") {
+      clearCountdown();
       replacePlayers(packet.players);
       rulesRef.current = packet.rules;
       setMatchRules(packet.rules);
@@ -1946,6 +2192,7 @@ function OnlineParty({
       setPhase("lobby");
     }
     if (packet.type === "end") {
+      clearCountdown();
       replacePlayers(packet.players);
       setWinnerName(packet.winnerName);
       setPhase("ended");
@@ -2323,6 +2570,7 @@ function OnlineParty({
   }, [canAutoJoin, defaultPlayerName, initialRoomCode]);
 
   const returnToLobby = () => {
+    clearCountdown();
     setInkSignal({ id: 0 });
     setInkedPlayers({});
     if (roleRef.current !== "host") {
@@ -2376,6 +2624,7 @@ function OnlineParty({
       return;
     }
     const nextMatchId = Date.now();
+    const startAt = Date.now() + 3000;
     targetCursor.current = 0;
     manualTargetsRef.current.clear();
     itemUsesRef.current.clear();
@@ -2391,13 +2640,14 @@ function OnlineParty({
     activeMatchIdRef.current = nextMatchId;
     setMatchRules(rulesRef.current);
     setGarbageSignal({ id: 0, amount: 0 });
-    setPhase("playing");
     broadcast({
       type: "start",
       matchId: nextMatchId,
+      startAt,
       players: next,
       rules: rulesRef.current,
     });
+    beginCountdown(startAt);
   };
 
   const shareSnapshot = (snapshot: GameSnapshot) => {
@@ -2516,6 +2766,7 @@ function OnlineParty({
 
   const leaveRoom = () => {
     clearConnectionTimeout();
+    clearCountdown();
     connectionAttemptRef.current += 1;
     removeRealtimeChannel();
     connectionsRef.current.forEach((connection) => connection.close());
@@ -2550,6 +2801,7 @@ function OnlineParty({
   useEffect(
     () => () => {
       clearConnectionTimeout();
+      clearCountdown();
       removeRealtimeChannel();
       connectionsRef.current.forEach((connection) => connection.close());
       hostConnectionRef.current?.close();
@@ -2569,7 +2821,7 @@ function OnlineParty({
   ).length;
   const standings =
     phase === "ended"
-      ? [...players].sort((a, b) => {
+      ? players.filter((player) => !player.spectating).sort((a, b) => {
           if (a.name === winnerName) return -1;
           if (b.name === winnerName) return 1;
           return (b.snapshot?.score ?? 0) - (a.snapshot?.score ?? 0);
@@ -2828,7 +3080,7 @@ function OnlineParty({
     <section
       className={`online-match ${isSpectating ? "online-spectating" : ""} ${
         phase === "ended" ? "online-ended" : ""
-      }`}
+      } ${phase === "countdown" ? "online-countdown" : ""}`}
     >
       <div className="online-match-bar">
         <div>
@@ -2900,7 +3152,19 @@ function OnlineParty({
       </div>
       <div className="online-arena">
         <div className="local-board-zone">
-          {localPlayer && !localPlayer.spectating ? (
+          {phase === "countdown" ? (
+            <div className="countdown-stage" aria-live="assertive">
+              <div className="countdown-board" aria-hidden="true">
+                {Array.from({ length: HEIGHT * WIDTH }, (_, index) => (
+                  <i key={index} />
+                ))}
+              </div>
+              <div className="match-countdown">
+                <span>GET READY</span>
+                <strong key={countdownValue}>{countdownValue}</strong>
+              </div>
+            </div>
+          ) : localPlayer && !localPlayer.spectating ? (
             <>
               <div
                 className={
