@@ -56,15 +56,21 @@ test("ships without starter-only assets", async () => {
     packageJson,
     gameClient,
     authGate,
+    profileDashboard,
     migration,
     writeLockMigration,
     directoryGrantMigration,
+    socialMigration,
     usernameAuth,
   ] =
     await Promise.all([
       readFile(new URL("../package.json", import.meta.url), "utf8"),
       readFile(new URL("../app/GameClient.tsx", import.meta.url), "utf8"),
       readFile(new URL("../app/AuthGate.tsx", import.meta.url), "utf8"),
+      readFile(
+        new URL("../app/ProfileDashboard.tsx", import.meta.url),
+        "utf8",
+      ),
       readFile(
         new URL(
           "../supabase/migrations/20260723153000_accounts.sql",
@@ -82,6 +88,13 @@ test("ships without starter-only assets", async () => {
       readFile(
         new URL(
           "../supabase/migrations/20260724002500_allow_username_auth_directory_read.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
+          "../supabase/migrations/20260724033000_records_friends_leaderboards.sql",
           import.meta.url,
         ),
         "utf8",
@@ -107,6 +120,8 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /PARTY CHAT/);
   assert.match(gameClient, /screen === "versus" && !multiplayerPlaying/);
   assert.match(gameClient, /nextScreen !== "versus"/);
+  assert.match(gameClient, /record_game_result/);
+  assert.match(gameClient, /onMatchResult/);
   assert.match(gameClient, /aria-label="모바일 게임 조작"/);
   assert.match(gameClient, /initialDelay = 105/);
   assert.match(gameClient, /repeatRate = 38/);
@@ -129,6 +144,10 @@ test("ships without starter-only assets", async () => {
   assert.match(authGate, /WELCOME TO TETSTAR/);
   assert.match(authGate, /CREATE ACCOUNT/);
   assert.match(authGate, /SEND RESET LINK/);
+  assert.match(authGate, /ProfileDashboard/);
+  assert.match(profileDashboard, /모드별 최고 기록/);
+  assert.match(profileDashboard, /send_friend_request/);
+  assert.match(profileDashboard, /친구 기록 랭킹/);
   assert.match(migration, /alter table public\.profiles enable row level security/);
   assert.match(migration, /is_username_available/);
   assert.match(writeLockMigration, /revoke update on public\.profiles/);
@@ -144,6 +163,11 @@ test("ships without starter-only assets", async () => {
   assert.match(usernameAuth, /context\.supabaseAdmin/);
   assert.match(usernameAuth, /username 또는 비밀번호가 올바르지 않습니다/);
   assert.doesNotMatch(usernameAuth, /sb_secret_|service_role.*=/i);
+  assert.match(socialMigration, /create table if not exists public\.friendships/);
+  assert.match(socialMigration, /create or replace function public\.record_game_result/);
+  assert.match(socialMigration, /security definer/);
+  assert.match(socialMigration, /participants read friendships/);
+  assert.match(socialMigration, /records readable by player or friends/);
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
   );

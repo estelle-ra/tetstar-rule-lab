@@ -61,6 +61,14 @@ type GameSnapshot = {
   status: Status;
 };
 
+type GameResult = {
+  mode: "sprint" | "blitz" | "zen" | "versus";
+  score: number;
+  timeMs: number;
+  lines: number;
+  won: boolean;
+};
+
 type RoomPlayer = {
   id: string;
   name: string;
@@ -280,6 +288,7 @@ type BoardProps = {
   onAttack?: (amount: number) => void;
   onFinish?: (status: "won" | "lost") => void;
   onSnapshot?: (snapshot: GameSnapshot) => void;
+  onResult?: (result: GameResult) => void | Promise<void>;
 };
 
 function GameBoard({
@@ -292,6 +301,7 @@ function GameBoard({
   onAttack,
   onFinish,
   onSnapshot,
+  onResult,
 }: BoardProps) {
   const initialQueue = useMemo(() => nextQueue([]), []);
   const [board, setBoard] = useState<Board>(() => emptyBoard());
@@ -309,6 +319,8 @@ function GameBoard({
   const [joystickOrigin, setJoystickOrigin] = useState({ x: 0, y: 0 });
   const [joystickActive, setJoystickActive] = useState(false);
   const finishSent = useRef(false);
+  const resultSent = useRef(false);
+  const startedAt = useRef(0);
   const snapshotSentAt = useRef(0);
   const repeatHandles = useRef(new Map<string, RepeatHandle>());
   const actionRef = useRef<(action: GameAction) => void>(() => undefined);
@@ -320,6 +332,10 @@ function GameBoard({
   const joystickPointer = useRef<number | null>(null);
   const joystickDirection = useRef<GameAction | null>(null);
   const joystickOriginRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    startedAt.current = Date.now();
+  }, []);
 
   const finish = useCallback(
     (nextStatus: "won" | "lost") => {
@@ -469,6 +485,24 @@ function GameBoard({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [finish, mode, status]);
+
+  useEffect(() => {
+    if (
+      resultSent.current ||
+      (status !== "won" && status !== "lost") ||
+      mode === "versus"
+    ) {
+      return;
+    }
+    resultSent.current = true;
+    onResult?.({
+      mode,
+      score,
+      timeMs: Math.max(1, Date.now() - startedAt.current),
+      lines,
+      won: status === "won",
+    });
+  }, [lines, mode, onResult, score, status]);
 
   useEffect(() => {
     if (!garbage?.amount || status !== "playing") return;
@@ -1085,12 +1119,14 @@ function OnlineParty({
   initialRoomCode,
   canAutoJoin,
   onPlayingChange,
+  onMatchResult,
 }: {
   rules: Rules;
   defaultPlayerName: string;
   initialRoomCode: string;
   canAutoJoin: boolean;
   onPlayingChange: (playing: boolean) => void;
+  onMatchResult: (result: GameResult) => void | Promise<void>;
 }) {
   const [phase, setPhaseState] = useState<
     "entry" | "connecting" | "lobby" | "playing" | "ended"
@@ -1119,6 +1155,8 @@ function OnlineParty({
   const rulesRef = useRef(rules);
   const chatMessagesRef = useRef<ChatMessage[]>([]);
   const autoJoinAttemptedRef = useRef(false);
+  const activeMatchIdRef = useRef(0);
+  const resultMatchIdRef = useRef(0);
   const targetCursor = useRef(0);
 
   useEffect(() => {
@@ -1185,6 +1223,26 @@ function OnlineParty({
     });
   };
 
+  const reportLocalMatchResult = (
+    finalPlayers: RoomPlayer[],
+    winnerId: string,
+  ) => {
+    const activeMatchId = activeMatchIdRef.current;
+    if (!activeMatchId || resultMatchIdRef.current === activeMatchId) return;
+    const localPlayer = finalPlayers.find(
+      (player) => player.id === localIdRef.current,
+    );
+    if (!localPlayer) return;
+    resultMatchIdRef.current = activeMatchId;
+    onMatchResult({
+      mode: "versus",
+      score: localPlayer.snapshot?.score ?? 0,
+      timeMs: Math.max(1, Date.now() - activeMatchId),
+      lines: localPlayer.snapshot?.lines ?? 0,
+      won: localPlayer.id === winnerId,
+    });
+  };
+
   const concludeIfNeeded = (next: RoomPlayer[]) => {
     if (phaseRef.current !== "playing") return;
     const survivors = next.filter((player) => player.alive && player.connected);
@@ -1200,6 +1258,7 @@ function OnlineParty({
     replacePlayers(finalPlayers);
     setWinnerName(winner.name);
     setPhase("ended");
+    reportLocalMatchResult(finalPlayers, winner.id);
     broadcast({
       type: "end",
       winnerId: winner.id,
@@ -1409,6 +1468,7 @@ function OnlineParty({
       replacePlayers(packet.players);
       setMatchRules(packet.rules);
       setMatchId(packet.matchId);
+      activeMatchIdRef.current = packet.matchId;
       setWinnerName("");
       setGarbageSignal({ id: 0, amount: 0 });
       setPhase("playing");
@@ -1426,6 +1486,7 @@ function OnlineParty({
       replacePlayers(packet.players);
       setWinnerName(packet.winnerName);
       setPhase("ended");
+      reportLocalMatchResult(packet.players, packet.winnerId);
     }
     if (packet.type === "full") {
       setRoomError(
@@ -1537,6 +1598,7 @@ function OnlineParty({
     setRoomError("");
     setWinnerName("");
     setMatchId(nextMatchId);
+    activeMatchIdRef.current = nextMatchId;
     setMatchRules(rulesRef.current);
     setGarbageSignal({ id: 0, amount: 0 });
     setPhase("playing");
@@ -2191,6 +2253,23 @@ export default function GameClient() {
     window.localStorage.removeItem("tetstar-identity-v1");
   };
 
+  const saveGameResult = useCallback(
+    async (result: GameResult) => {
+      if (!supabase || !identity?.userId || identity.guest) return;
+      const { error } = await supabase.rpc("record_game_result", {
+        p_mode: result.mode,
+        p_score: Math.max(0, Math.round(result.score)),
+        p_time_ms: Math.max(0, Math.round(result.timeMs)),
+        p_lines: Math.max(0, Math.round(result.lines)),
+        p_won: result.won,
+      });
+      if (error) {
+        console.warn("GAME_RESULT_SAVE_FAILED", error.code);
+      }
+    },
+    [identity],
+  );
+
   const goHome = () => {
     setScreen("home");
     setMultiplayerPlaying(false);
@@ -2410,6 +2489,7 @@ export default function GameClient() {
               initialRoomCode={inviteRoomCode}
               canAutoJoin={identityReady && Boolean(identity)}
               onPlayingChange={setMultiplayerPlaying}
+              onMatchResult={saveGameResult}
               key={run}
             />
           ) : (
@@ -2425,6 +2505,7 @@ export default function GameClient() {
                 controls={SINGLE_CONTROLS}
                 rules={rules}
                 mode={screen}
+                onResult={saveGameResult}
               />
               <aside className="mission-panel">
                 <span className="eyebrow">MISSION BRIEF</span>

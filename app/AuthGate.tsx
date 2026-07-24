@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { supabase, supabaseConfig } from "./lib/supabase";
+import ProfileDashboard from "./ProfileDashboard";
 
 export type PlayerIdentity = {
   username: string;
@@ -237,6 +238,7 @@ export default function AuthGate({
     run(async () => {
       await supabase?.auth.signOut();
       onSignOut();
+      changeView("login");
     });
 
   const submit = () => {
@@ -250,7 +252,11 @@ export default function AuthGate({
 
   return (
     <div className="identity-gate" role="dialog" aria-modal="true">
-      <div className="identity-card auth-card">
+      <div
+        className={`identity-card auth-card ${
+          view === "profile" && !identity?.guest ? "profile-card" : ""
+        }`}
+      >
         {canClose && !recoveryMode && (
           <button
             className="identity-close"
@@ -271,28 +277,37 @@ export default function AuthGate({
 
         {view === "profile" ? (
           <>
-            <p>
-              {identity?.guest
-                ? "이 기기에 저장된 게스트 프로필입니다."
-                : "Supabase 계정으로 로그인되어 기록을 저장할 수 있습니다."}
-            </p>
-            <div className="profile-summary">
-              <span>{identity?.guest ? "GUEST" : "ACCOUNT"}</span>
-              <strong>{identity?.username}</strong>
-            </div>
             {identity?.guest ? (
-              <div className="auth-actions">
-                <button onClick={() => changeView("guest")}>
-                  USERNAME 변경
-                </button>
-                <button onClick={() => changeView("login")}>
-                  계정 로그인
-                </button>
-              </div>
+              <>
+                <p>이 기기에 저장된 게스트 프로필입니다.</p>
+                <div className="profile-summary">
+                  <span>GUEST</span>
+                  <strong>{identity.username}</strong>
+                </div>
+                <div className="auth-actions">
+                  <button onClick={() => changeView("guest")}>
+                    USERNAME 변경
+                  </button>
+                  <button onClick={() => changeView("login")}>
+                    계정 로그인
+                  </button>
+                </div>
+              </>
             ) : (
-              <button className="identity-submit" onClick={() => void logout()}>
-                LOG OUT
-              </button>
+              <>
+                {identity?.userId && (
+                  <ProfileDashboard
+                    userId={identity.userId}
+                    username={identity.username}
+                  />
+                )}
+                <button
+                  className="identity-submit profile-logout"
+                  onClick={() => void logout()}
+                >
+                  LOG OUT
+                </button>
+              </>
             )}
           </>
         ) : (
