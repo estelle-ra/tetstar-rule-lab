@@ -429,8 +429,14 @@ function GameBoard({
   const [clearEffect, setClearEffect] = useState<{
     id: number;
     lines: number;
+    rows: number[];
   } | null>(null);
-  const [impactId, setImpactId] = useState(0);
+  const [impactEffect, setImpactEffect] = useState<{
+    id: number;
+    x: number;
+    y: number;
+    piece: PieceName;
+  } | null>(null);
   const [windowFocused, setWindowFocused] = useState(true);
   const [joystickVector, setJoystickVector] = useState({ x: 0, y: 0 });
   const [joystickOrigin, setJoystickOrigin] = useState({ x: 0, y: 0 });
@@ -507,8 +513,12 @@ function GameBoard({
         return;
       }
 
-      const fullRows = merged.filter((row) => row.every(Boolean));
-      const cleared = fullRows.length;
+      const fullRowIndexes = merged.reduce<number[]>(
+        (indexes, row, index) =>
+          row.every(Boolean) ? [...indexes, index] : indexes,
+        [],
+      );
+      const cleared = fullRowIndexes.length;
       const cleaned = merged.filter((row) => !row.every(Boolean));
       while (cleaned.length < HEIGHT) cleaned.unshift(Array(WIDTH).fill(null));
 
@@ -540,7 +550,11 @@ function GameBoard({
       );
 
       if (cleared) {
-        const effect = { id: Date.now(), lines: cleared };
+        const effect = {
+          id: Date.now(),
+          lines: cleared,
+          rows: fullRowIndexes,
+        };
         setClearEffect(effect);
         window.setTimeout(
           () =>
@@ -772,11 +786,22 @@ function GameBoard({
       distance += 1;
     }
     setScore((value) => value + distance * 2);
+    const landingCells = pieceCells(dropped);
+    const minX = Math.min(...landingCells.map(([x]) => x));
+    const maxX = Math.max(...landingCells.map(([x]) => x));
+    const bottomY = Math.max(...landingCells.map(([, y]) => y));
     const nextImpactId = Date.now();
-    setImpactId(nextImpactId);
+    setImpactEffect({
+      id: nextImpactId,
+      x: ((minX + maxX + 1) / 2 / WIDTH) * 100,
+      y: ((bottomY + 1) / HEIGHT) * 100,
+      piece: dropped.type,
+    });
     window.setTimeout(
       () =>
-        setImpactId((current) => (current === nextImpactId ? 0 : current)),
+        setImpactEffect((current) =>
+          current?.id === nextImpactId ? null : current,
+        ),
       260,
     );
     lockPiece(dropped);
@@ -1080,7 +1105,7 @@ function GameBoard({
           </div>
         </aside>
 
-        <div className={`board-shell ${impactId ? "board-impact" : ""}`}>
+        <div className={`board-shell ${impactEffect ? "board-impact" : ""}`}>
           <div className="board" role="grid" aria-label={`${player} 게임 보드`}>
             {rendered.flatMap((row, y) =>
               row.map((cell, x) => (
@@ -1091,16 +1116,36 @@ function GameBoard({
               )),
             )}
           </div>
-          {flash && <div className="line-flash">{flash}</div>}
-          {impactId > 0 && (
-            <div className="hard-drop-impact" aria-hidden="true" key={impactId}>
+          {flash && (
+            <div
+              className={`line-flash ${
+                flash.includes("T-SPIN") ? "line-flash-tspin" : ""
+              } ${flash === "QUAD!" ? "line-flash-quad" : ""}`}
+            >
+              {flash}
+            </div>
+          )}
+          {impactEffect && (
+            <div
+              className={`hard-drop-impact impact-${impactEffect.piece}`}
+              aria-hidden="true"
+              key={impactEffect.id}
+              style={
+                {
+                  left: `${impactEffect.x}%`,
+                  top: `${impactEffect.y}%`,
+                } as CSSProperties
+              }
+            >
               {Array.from({ length: 10 }, (_, index) => (
                 <i
                   key={index}
                   style={
                     {
-                      "--impact-x": `${(index - 4.5) * 17}px`,
+                      "--impact-x": `${Math.cos((index * 36 * Math.PI) / 180) * (25 + (index % 4) * 12)}px`,
+                      "--impact-y": `${Math.sin((index * 36 * Math.PI) / 180) * (18 + (index % 3) * 10) - 8}px`,
                       "--impact-delay": `${(index % 3) * 18}ms`,
+                      "--impact-size": `${8 + (index % 4) * 3}px`,
                     } as CSSProperties
                   }
                 >
@@ -1122,6 +1167,10 @@ function GameBoard({
                     ((index * 137.5 + clearEffect.lines * 23) * Math.PI) / 180;
                   const distance =
                     48 + (index % 7) * 13 + clearEffect.lines * 10;
+                  const originRow =
+                    clearEffect.rows[index % clearEffect.rows.length] ?? 10;
+                  const originX =
+                    5 + ((index * 29 + clearEffect.lines * 11) % 91);
                   const particlePieces: PieceName[] = [
                     "I",
                     "J",
@@ -1133,10 +1182,12 @@ function GameBoard({
                   ];
                   return (
                     <i
-                      className={`piece-${particlePieces[index % particlePieces.length]}`}
+                      className={`piece-${particlePieces[index % particlePieces.length]} particle-shape-${index % 3}`}
                       key={index}
                       style={
                         {
+                          "--particle-origin-x": `${originX}%`,
+                          "--particle-origin-y": `${((originRow + 0.5) / HEIGHT) * 100}%`,
                           "--particle-x": `${Math.cos(angle) * distance}px`,
                           "--particle-y": `${Math.sin(angle) * distance}px`,
                           "--particle-delay": `${(index % 6) * 16}ms`,

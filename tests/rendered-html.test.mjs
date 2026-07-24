@@ -209,10 +209,16 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /beginCountdown\(startAt\)/);
   assert.match(gameClient, /className="match-countdown"/);
   assert.match(gameClient, /OUT OF FOCUS/);
-  assert.match(gameClient, /className="hard-drop-impact"/);
+  assert.match(gameClient, /hard-drop-impact impact-/);
   assert.match(gameClient, /clear-particles-/);
+  assert.match(gameClient, /fullRowIndexes/);
+  assert.match(gameClient, /--impact-y/);
+  assert.match(gameClient, /--particle-origin-y/);
+  assert.match(gameClient, /particle-shape-/);
   assert.match(globalCss, /@keyframes hard-drop-shake/);
   assert.match(globalCss, /@keyframes line-particle-burst/);
+  assert.match(globalCss, /@keyframes line-callout/);
+  assert.match(globalCss, /\.particle-shape-1/);
   assert.match(globalCss, /\.remote-player-identity/);
   assert.match(gameClient, /const LOCK_DELAY_MS = 350/);
   assert.match(gameClient, /const MAX_LOCK_RESETS = 8/);
