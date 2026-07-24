@@ -69,6 +69,13 @@ type GameResult = {
   won: boolean;
 };
 
+type PersonalBestResult = {
+  personal_best: boolean;
+  mode: GameResult["mode"];
+  best_score: number;
+  best_time_ms: number | null;
+};
+
 type RoomPlayer = {
   id: string;
   name: string;
@@ -323,6 +330,7 @@ function GameBoard({
   const startedAt = useRef(0);
   const snapshotSentAt = useRef(0);
   const repeatHandles = useRef(new Map<string, RepeatHandle>());
+  const inputBlockedUntilRef = useRef(0);
   const actionRef = useRef<(action: GameAction) => void>(() => undefined);
   const stepDownRef = useRef<() => void>(() => undefined);
   const lockDeadlineRef = useRef<number | null>(null);
@@ -574,7 +582,17 @@ function GameBoard({
     [active, board, refreshLockDelay],
   );
 
+  const clearRepeatHandles = useCallback(() => {
+    repeatHandles.current.forEach((handle) => {
+      if (handle.delay) window.clearTimeout(handle.delay);
+      if (handle.interval) window.clearInterval(handle.interval);
+    });
+    repeatHandles.current.clear();
+  }, []);
+
   const hardDrop = useCallback(() => {
+    clearRepeatHandles();
+    inputBlockedUntilRef.current = window.performance.now() + 75;
     let dropped = { ...active };
     let distance = 0;
     while (!collides(board, { ...dropped, y: dropped.y + 1 })) {
@@ -583,7 +601,7 @@ function GameBoard({
     }
     setScore((value) => value + distance * 2);
     lockPiece(dropped);
-  }, [active, board, lockPiece]);
+  }, [active, board, clearRepeatHandles, lockPiece]);
 
   const holdPiece = useCallback(() => {
     if (!canHold) return;
@@ -606,6 +624,12 @@ function GameBoard({
   const performAction = useCallback(
     (action: GameAction) => {
       if (status !== "playing") return;
+      if (
+        action !== "hardDrop" &&
+        window.performance.now() < inputBlockedUntilRef.current
+      ) {
+        return;
+      }
       if (action === "left") move(-1);
       if (action === "right") move(1);
       if (action === "down") {
@@ -633,8 +657,8 @@ function GameBoard({
   }, []);
 
   const stopAllRepeats = useCallback(() => {
-    for (const token of repeatHandles.current.keys()) stopRepeat(token);
-  }, [stopRepeat]);
+    clearRepeatHandles();
+  }, [clearRepeatHandles]);
 
   const startRepeat = useCallback(
     (
@@ -1145,6 +1169,7 @@ function OnlineParty({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatText, setChatText] = useState("");
   const [inviteStatus, setInviteStatus] = useState("COPY INVITE LINK");
+  const [manualInviteJoin, setManualInviteJoin] = useState(false);
   const peerRef = useRef<PeerInstance | null>(null);
   const hostConnectionRef = useRef<DataConnection | null>(null);
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
@@ -1155,6 +1180,7 @@ function OnlineParty({
   const rulesRef = useRef(rules);
   const chatMessagesRef = useRef<ChatMessage[]>([]);
   const autoJoinAttemptedRef = useRef(false);
+  const connectionAttemptRef = useRef(0);
   const activeMatchIdRef = useRef(0);
   const resultMatchIdRef = useRef(0);
   const targetCursor = useRef(0);
@@ -1515,11 +1541,18 @@ function OnlineParty({
     setRole("guest");
     roleRef.current = "guest";
     setPhase("connecting");
+    const attempt = connectionAttemptRef.current + 1;
+    connectionAttemptRef.current = attempt;
+    hostConnectionRef.current?.close();
+    peerRef.current?.destroy();
+    hostConnectionRef.current = null;
+    peerRef.current = null;
     try {
       const { Peer } = await import("peerjs");
       const peer = new Peer({ debug: 0 });
       peerRef.current = peer;
       peer.on("open", () => {
+        if (connectionAttemptRef.current !== attempt) return;
         const connection = peer.connect(roomPeerId(code), {
           metadata: { name: cleanPlayerName(requestedName) },
           serialization: "json",
@@ -1530,19 +1563,23 @@ function OnlineParty({
           handleGuestPacket(data as RoomPacket),
         );
         connection.on("close", () => {
+          if (connectionAttemptRef.current !== attempt) return;
           setRoomError("호스트와 연결이 끊겼습니다.");
           setPhase("entry");
         });
         connection.on("error", () => {
+          if (connectionAttemptRef.current !== attempt) return;
           setRoomError("호스트와 연결할 수 없습니다.");
           setPhase("entry");
         });
       });
       peer.on("error", (error) => {
+        if (connectionAttemptRef.current !== attempt) return;
         setRoomError(mapPeerError(error));
         setPhase("entry");
       });
     } catch {
+      if (connectionAttemptRef.current !== attempt) return;
       setRoomError("온라인 연결 모듈을 불러오지 못했습니다.");
       setPhase("entry");
     }
@@ -1688,6 +1725,7 @@ function OnlineParty({
   };
 
   const leaveRoom = () => {
+    connectionAttemptRef.current += 1;
     connectionsRef.current.forEach((connection) => connection.close());
     connectionsRef.current.clear();
     hostConnectionRef.current?.close();
@@ -1723,12 +1761,56 @@ function OnlineParty({
   const survivors = players.filter(
     (player) => player.alive && player.connected,
   ).length;
+  const inviteCode = initialRoomCode
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
 
   if (phase === "entry" || phase === "connecting") {
+    if (inviteCode.length === 6 && !manualInviteJoin) {
+      return (
+        <section className="online-entry online-invite-entry">
+          <div className="invite-room-card">
+            <span className="eyebrow">MULTIPLAYER INVITE</span>
+            <h2>
+              {phase === "connecting"
+                ? "초대받은 방으로 입장 중…"
+                : roomError
+                  ? "방에 바로 입장하지 못했습니다."
+                  : "닉네임 확인 후 바로 입장합니다."}
+            </h2>
+            <div className="invite-room-code">
+              <span>ROOM CODE</span>
+              <strong>{inviteCode}</strong>
+            </div>
+            {roomError && <p className="room-error">{roomError}</p>}
+            {phase === "entry" && canAutoJoin && (
+              <button
+                className="invite-retry"
+                onClick={() => void joinRoom(inviteCode, defaultPlayerName)}
+              >
+                RETRY JOIN ↗
+              </button>
+            )}
+            {phase === "entry" && (
+              <button
+                className="invite-manual"
+                onClick={() => {
+                  setJoinCode(inviteCode);
+                  setManualInviteJoin(true);
+                }}
+              >
+                방 코드 직접 입력
+              </button>
+            )}
+          </div>
+        </section>
+      );
+    }
     return (
       <section className="online-entry">
         <div className="online-entry-head">
-          <span className="eyebrow">ONLINE PARTY / UP TO 8</span>
+          <span className="eyebrow">MULTIPLAYER / UP TO 8</span>
           <h2>각자의 기기에서 접속하세요.</h2>
           <p>
             한 명이 방을 만들고, 나머지 참가자는 6자리 코드로 접속합니다.
@@ -2140,6 +2222,9 @@ export default function GameClient() {
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [inviteRoomCode, setInviteRoomCode] = useState("");
   const [multiplayerPlaying, setMultiplayerPlaying] = useState(false);
+  const [personalBest, setPersonalBest] =
+    useState<PersonalBestResult | null>(null);
+  const personalBestTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const code = new URLSearchParams(window.location.search)
@@ -2256,7 +2341,7 @@ export default function GameClient() {
   const saveGameResult = useCallback(
     async (result: GameResult) => {
       if (!supabase || !identity?.userId || identity.guest) return;
-      const { error } = await supabase.rpc("record_game_result", {
+      const { data, error } = await supabase.rpc("submit_game_result", {
         p_mode: result.mode,
         p_score: Math.max(0, Math.round(result.score)),
         p_time_ms: Math.max(0, Math.round(result.timeMs)),
@@ -2265,9 +2350,30 @@ export default function GameClient() {
       });
       if (error) {
         console.warn("GAME_RESULT_SAVE_FAILED", error.code);
+        return;
+      }
+      const saved = data as PersonalBestResult | null;
+      if (saved?.personal_best) {
+        if (personalBestTimerRef.current) {
+          window.clearTimeout(personalBestTimerRef.current);
+        }
+        setPersonalBest(saved);
+        personalBestTimerRef.current = window.setTimeout(
+          () => setPersonalBest(null),
+          4500,
+        );
       }
     },
     [identity],
+  );
+
+  useEffect(
+    () => () => {
+      if (personalBestTimerRef.current) {
+        window.clearTimeout(personalBestTimerRef.current);
+      }
+    },
+    [],
   );
 
   const goHome = () => {
@@ -2388,39 +2494,55 @@ export default function GameClient() {
               <h2>게임 모드</h2>
               <p>플레이할 모드를 먼저 선택하세요. 모든 모드는 같은 기본 조작을 사용합니다.</p>
             </div>
-            <div className="mode-grid">
-              <ModeCard
-                accent="orange"
-                code="40L"
-                title="40 LINES"
-                description="40줄을 가장 빠르게 클리어"
-                meta="SPRINT / SOLO"
-                onClick={() => start("sprint")}
-              />
-              <ModeCard
-                accent="cyan"
-                code="2M"
-                title="BLITZ"
-                description="2분 동안 최고 점수에 도전"
-                meta="SCORE / SOLO"
-                onClick={() => start("blitz")}
-              />
-              <ModeCard
-                accent="violet"
-                code="∞"
-                title="ZEN"
-                description="끝없이 쌓으며 룰을 테스트"
-                meta="PRACTICE / SOLO"
-                onClick={() => start("zen")}
-              />
-              <ModeCard
-                accent="lime"
-                code="8P"
-                title="ONLINE PARTY"
-                description="방 코드로 각자의 기기에서 실시간 대전"
-                meta="2–8 PLAYERS / P2P"
-                onClick={() => start("versus")}
-              />
+            <div className="mode-groups">
+              <section className="mode-group">
+                <div className="mode-group-head">
+                  <strong>SINGLEPLAYER</strong>
+                  <span>3 MODES</span>
+                </div>
+                <div className="mode-grid mode-grid-single">
+                  <ModeCard
+                    accent="orange"
+                    code="40L"
+                    title="40 LINES"
+                    description="40줄을 가장 빠르게 클리어"
+                    meta="SPRINT / SOLO"
+                    onClick={() => start("sprint")}
+                  />
+                  <ModeCard
+                    accent="cyan"
+                    code="2M"
+                    title="BLITZ"
+                    description="2분 동안 최고 점수에 도전"
+                    meta="SCORE / SOLO"
+                    onClick={() => start("blitz")}
+                  />
+                  <ModeCard
+                    accent="violet"
+                    code="∞"
+                    title="ZEN"
+                    description="끝없이 쌓으며 룰을 테스트"
+                    meta="PRACTICE / SOLO"
+                    onClick={() => start("zen")}
+                  />
+                </div>
+              </section>
+              <section className="mode-group">
+                <div className="mode-group-head">
+                  <strong>MULTIPLAYER</strong>
+                  <span>2–8 PLAYERS</span>
+                </div>
+                <div className="mode-grid mode-grid-multi">
+                  <ModeCard
+                    accent="lime"
+                    code="8P"
+                    title="MULTIPLAYER"
+                    description="초대 링크나 방 코드로 각자의 기기에서 실시간 대전"
+                    meta="2–8 PLAYERS / P2P"
+                    onClick={() => start("versus")}
+                  />
+                </div>
+              </section>
             </div>
           </section>
 
@@ -2474,7 +2596,7 @@ export default function GameClient() {
               </strong>
             </button>
             {screen === "versus" ? (
-              <span className="online-mode-label">ROOM CODE / P2P</span>
+              <span className="online-mode-label">MULTIPLAYER / P2P</span>
             ) : (
               <button className="restart-button" onClick={() => start(screen)}>
                 ↻ RESTART
@@ -2567,6 +2689,29 @@ export default function GameClient() {
           onRecoveryComplete={() => setRecoveryMode(false)}
           onClose={() => setIdentityOpen(false)}
         />
+      )}
+
+      {personalBest && (
+        <aside className="personal-best-popup" role="status" aria-live="polite">
+          <button
+            aria-label="개인 최고 기록 알림 닫기"
+            onClick={() => setPersonalBest(null)}
+          >
+            ×
+          </button>
+          <span>★ NEW PERSONAL BEST</span>
+          <strong>
+            {personalBest.mode === "sprint"
+              ? "40 LINES"
+              : personalBest.mode.toUpperCase()}
+          </strong>
+          <em>
+            {personalBest.mode === "sprint" &&
+            personalBest.best_time_ms !== null
+              ? `${(personalBest.best_time_ms / 1000).toFixed(2)} SEC`
+              : `${personalBest.best_score.toLocaleString()} PTS`}
+          </em>
+        </aside>
       )}
 
       <footer>

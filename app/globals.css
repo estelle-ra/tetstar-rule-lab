@@ -446,6 +446,55 @@ input:focus-visible {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.mode-groups {
+  display: grid;
+  gap: 24px;
+}
+
+.mode-group {
+  display: grid;
+  gap: 10px;
+}
+
+.mode-group-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.mode-group-head strong {
+  color: #c8cdd3;
+  font: 800 14px monospace;
+  letter-spacing: 0.12em;
+}
+
+.mode-group-head span {
+  color: #616975;
+  font: 11px monospace;
+  letter-spacing: 0.1em;
+}
+
+.mode-grid-single {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.mode-grid-single .mode-card {
+  gap: 12px;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+}
+
+.mode-grid-single .mode-code {
+  font-size: 42px;
+}
+
+.mode-grid-single .mode-meta {
+  display: none;
+}
+
+.mode-grid-multi {
+  grid-template-columns: 1fr;
+}
+
 .mode-card {
   align-items: center;
   background: rgba(18, 20, 24, 0.88);
@@ -1015,6 +1064,69 @@ kbd {
   margin: 0;
 }
 
+.online-invite-entry {
+  max-width: 720px;
+}
+
+.invite-room-card {
+  background:
+    linear-gradient(135deg, rgba(101, 211, 232, 0.1), transparent 52%),
+    #111318;
+  border: 1px solid #343a43;
+  padding: clamp(26px, 5vw, 54px);
+}
+
+.invite-room-card h2 {
+  font-size: clamp(34px, 6vw, 60px);
+  letter-spacing: -0.055em;
+  line-height: 1.03;
+  margin: 17px 0 28px;
+}
+
+.invite-room-code {
+  align-items: end;
+  border-bottom: 1px solid #333943;
+  border-top: 1px solid #333943;
+  display: flex;
+  justify-content: space-between;
+  padding: 19px 0;
+}
+
+.invite-room-code span {
+  color: #6f7782;
+  font: 11px monospace;
+  letter-spacing: 0.14em;
+}
+
+.invite-room-code strong {
+  color: var(--cyan);
+  font: 800 clamp(27px, 6vw, 44px) monospace;
+  letter-spacing: 0.16em;
+}
+
+.invite-retry,
+.invite-manual {
+  cursor: pointer;
+  font: 800 12px monospace;
+  height: 52px;
+  letter-spacing: 0.08em;
+  margin-top: 18px;
+  width: 100%;
+}
+
+.invite-retry {
+  background: var(--cyan);
+  border: 0;
+  color: #0b0d10;
+}
+
+.invite-manual {
+  background: transparent;
+  border: 1px solid #3b424c;
+  color: #9098a3;
+  margin-top: 8px;
+}
+
 .online-name-field {
   display: block;
   margin-bottom: 16px;
@@ -1127,6 +1239,62 @@ button.online-choice:hover {
   font: 12px monospace;
   margin: 16px 0 0;
   padding: 10px 12px;
+}
+
+.personal-best-popup {
+  animation: personal-best-in 320ms ease-out;
+  background: #f0eee8;
+  border-left: 7px solid var(--orange);
+  bottom: 28px;
+  box-shadow: 0 18px 65px rgba(0, 0, 0, 0.55);
+  color: #12151a;
+  display: grid;
+  gap: 4px;
+  min-width: min(390px, calc(100vw - 36px));
+  padding: 22px 52px 22px 24px;
+  position: fixed;
+  right: 28px;
+  z-index: 80;
+}
+
+.personal-best-popup > button {
+  background: transparent;
+  border: 0;
+  color: #5c626a;
+  cursor: pointer;
+  font-size: 27px;
+  line-height: 1;
+  position: absolute;
+  right: 14px;
+  top: 12px;
+}
+
+.personal-best-popup > span {
+  color: #d54e2c;
+  font: 800 12px monospace;
+  letter-spacing: 0.12em;
+}
+
+.personal-best-popup > strong {
+  font-size: 26px;
+  letter-spacing: -0.035em;
+}
+
+.personal-best-popup > em {
+  color: #274fd9;
+  font: normal 800 31px monospace;
+}
+
+@keyframes personal-best-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .online-note {
@@ -2293,6 +2461,22 @@ footer {
     grid-template-columns: 1fr;
   }
 
+  .mode-grid-single {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-grid-single .mode-card {
+    grid-template-columns: 108px minmax(0, 1fr) auto auto;
+  }
+
+  .mode-grid-single .mode-code {
+    font-size: 54px;
+  }
+
+  .mode-grid-single .mode-meta {
+    display: block;
+  }
+
   .section-title p {
     max-width: 380px;
   }
@@ -2419,6 +2603,22 @@ footer {
     grid-template-columns: 1fr;
   }
 
+  .mode-groups {
+    gap: 22px;
+  }
+
+  .mode-grid-single .mode-card {
+    grid-template-columns: 70px minmax(0, 1fr) auto;
+  }
+
+  .mode-grid-single .mode-code {
+    font-size: 44px;
+  }
+
+  .mode-grid-single .mode-meta {
+    display: none;
+  }
+
   .mode-card {
     grid-template-columns: 70px minmax(0, 1fr) auto;
     min-height: 130px;
@@ -2439,6 +2639,19 @@ footer {
 
   .mode-meta {
     display: none;
+  }
+
+  .invite-room-code {
+    align-items: start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .personal-best-popup {
+    bottom: 16px;
+    left: 16px;
+    min-width: 0;
+    right: 16px;
   }
 
   .screen-playing .topbar {

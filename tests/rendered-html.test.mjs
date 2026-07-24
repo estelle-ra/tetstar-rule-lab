@@ -38,7 +38,8 @@ test("server-renders the complete game selector", async () => {
   assert.match(html, /40 LINES/);
   assert.match(html, /BLITZ/);
   assert.match(html, /ZEN/);
-  assert.match(html, /ONLINE PARTY/);
+  assert.match(html, /SINGLEPLAYER/);
+  assert.match(html, /MULTIPLAYER/);
   assert.match(html, /2–8 PLAYERS/);
   assert.match(html, /RULE LAB/);
   assert.match(html, /7-BAG · 7종 균등/);
@@ -61,7 +62,9 @@ test("ships without starter-only assets", async () => {
     writeLockMigration,
     directoryGrantMigration,
     socialMigration,
+    personalBestMigration,
     usernameAuth,
+    icon,
   ] =
     await Promise.all([
       readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -101,11 +104,19 @@ test("ships without starter-only assets", async () => {
       ),
       readFile(
         new URL(
+          "../supabase/migrations/20260724060000_personal_best_result.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(
+        new URL(
           "../supabase/functions/username-auth/index.ts",
           import.meta.url,
         ),
         "utf8",
       ),
+      readFile(new URL("../app/icon.svg", import.meta.url), "utf8"),
     ]);
 
   assert.match(packageJson, /"name": "tetstar-rule-lab"/);
@@ -120,7 +131,12 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /PARTY CHAT/);
   assert.match(gameClient, /screen === "versus" && !multiplayerPlaying/);
   assert.match(gameClient, /nextScreen !== "versus"/);
-  assert.match(gameClient, /record_game_result/);
+  assert.match(gameClient, /submit_game_result/);
+  assert.match(gameClient, /NEW PERSONAL BEST/);
+  assert.match(gameClient, /inputBlockedUntilRef/);
+  assert.match(gameClient, /clearRepeatHandles/);
+  assert.match(gameClient, /RETRY JOIN/);
+  assert.match(gameClient, /MULTIPLAYER INVITE/);
   assert.match(gameClient, /onMatchResult/);
   assert.match(gameClient, /aria-label="모바일 게임 조작"/);
   assert.match(gameClient, /initialDelay = 105/);
@@ -168,6 +184,14 @@ test("ships without starter-only assets", async () => {
   assert.match(socialMigration, /security definer/);
   assert.match(socialMigration, /participants read friendships/);
   assert.match(socialMigration, /records readable by player or friends/);
+  assert.match(
+    personalBestMigration,
+    /create or replace function public\.submit_game_result/,
+  );
+  assert.match(personalBestMigration, /'personal_best'/);
+  assert.match(personalBestMigration, /security definer/);
+  assert.match(icon, /<svg/);
+  assert.match(icon, /<rect/);
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)),
   );
