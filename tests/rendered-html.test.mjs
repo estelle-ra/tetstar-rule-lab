@@ -156,6 +156,13 @@ test("ships without starter-only assets", async () => {
   assert.match(gameClient, /joiningAsSpectator/);
   assert.match(gameClient, /다음 경기부터 참가합니다/);
   assert.match(gameClient, /screen-multiplayer-playing/);
+  assert.match(gameClient, /mobile-ink-action/);
+  assert.match(gameClient, /에게 먹물 아이템 사용/);
+  assert.match(gameClient, /type: "lobby"/);
+  assert.match(gameClient, /RETURN TO LOBBY/);
+  assert.match(gameClient, /Numpad/);
+  assert.match(gameClient, /event\.code !== "KeyI"/);
+  assert.match(gameClient, /repeatHandles\.current\.get\(token\) !== handle/);
   assert.match(gameClient, /REALTIME READY/);
   assert.match(gameClient, /SUPABASE REALTIME/);
   assert.match(globalCss, /calc\(\(100dvh - 330px\) \/ 20\)/);

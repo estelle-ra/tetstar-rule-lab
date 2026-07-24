@@ -130,6 +130,7 @@ type RoomPacket =
   | { type: "attack-log"; log: AttackLog }
   | { type: "chat-submit"; text: string }
   | { type: "chat"; message: ChatMessage }
+  | { type: "lobby"; players: RoomPlayer[]; rules: Rules }
   | { type: "host-transfer"; hostId: string; players: RoomPlayer[] }
   | { type: "snapshot"; playerId?: string; snapshot: GameSnapshot }
   | { type: "finish"; status: "lost" }
@@ -670,7 +671,7 @@ function GameBoard({
     (action: GameAction) => {
       if (status !== "playing") return;
       if (
-        action !== "hardDrop" &&
+        (action === "left" || action === "right" || action === "down") &&
         window.performance.now() < inputBlockedUntilRef.current
       ) {
         return;
@@ -717,11 +718,12 @@ function GameBoard({
       const handle: RepeatHandle = {};
       repeatHandles.current.set(token, handle);
       handle.delay = window.setTimeout(() => {
+        if (repeatHandles.current.get(token) !== handle) return;
         actionRef.current(action);
-        handle.interval = window.setInterval(
-          () => actionRef.current(action),
-          repeatRate,
-        );
+        handle.interval = window.setInterval(() => {
+          if (repeatHandles.current.get(token) !== handle) return;
+          actionRef.current(action);
+        }, repeatRate);
       }, initialDelay);
     },
     [stopRepeat],
@@ -761,6 +763,8 @@ function GameBoard({
       event.preventDefault();
       if (event.repeat) return;
       if (action === "left" || action === "right" || action === "down") {
+        if (action === "left") stopRepeat(`key:${controls.right}`);
+        if (action === "right") stopRepeat(`key:${controls.left}`);
         startRepeat(
           `key:${event.code}`,
           action,
@@ -1168,6 +1172,7 @@ function RemoteBoard({
   isSelf,
   selected,
   targeting,
+  hotkey,
   inkRemaining,
   onSelect,
   onInk,
@@ -1176,6 +1181,7 @@ function RemoteBoard({
   isSelf?: boolean;
   selected?: boolean;
   targeting?: boolean;
+  hotkey?: number;
   inkRemaining?: number;
   onSelect?: () => void;
   onInk?: () => void;
@@ -1188,6 +1194,7 @@ function RemoteBoard({
     >
       <div className="remote-player-head">
         <span>
+          {hotkey && <kbd>{hotkey}</kbd>}
           P{player.slot + 1} {player.name}
         </span>
         <em>{player.alive ? (player.connected ? "LIVE" : "OFFLINE") : "OUT"}</em>
@@ -1286,6 +1293,10 @@ function OnlineParty({
   const targetCursor = useRef(0);
   const manualTargetsRef = useRef(new Map<string, string>());
   const itemUsesRef = useRef(new Map<string, number>());
+  const shortcutSelectTargetRef = useRef<(targetId: string) => void>(
+    () => undefined,
+  );
+  const shortcutInkRef = useRef<(targetId: string) => void>(() => undefined);
 
   useEffect(() => {
     if (phaseRef.current === "entry") setPlayerName(defaultPlayerName);
@@ -1296,10 +1307,9 @@ function OnlineParty({
   }, [onPlayingChange, phase]);
 
   useEffect(() => {
+    if (roleRef.current === "guest" || phaseRef.current === "playing") return;
     rulesRef.current = rules;
-    if (roleRef.current !== "guest" && phaseRef.current !== "playing") {
-      setMatchRules(rules);
-    }
+    setMatchRules(rules);
   }, [rules]);
 
   const setPhase = (next: typeof phase) => {
@@ -1822,6 +1832,16 @@ function OnlineParty({
     if (packet.type === "chat") {
       appendChat(packet.message);
     }
+    if (packet.type === "lobby") {
+      replacePlayers(packet.players);
+      rulesRef.current = packet.rules;
+      setMatchRules(packet.rules);
+      setWinnerName("");
+      setSelectedTargetId("");
+      setInkUsed(0);
+      setAttackLogs([]);
+      setPhase("lobby");
+    }
     if (packet.type === "end") {
       replacePlayers(packet.players);
       setWinnerName(packet.winnerName);
@@ -2199,6 +2219,34 @@ function OnlineParty({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canAutoJoin, defaultPlayerName, initialRoomCode]);
 
+  const returnToLobby = () => {
+    if (roleRef.current !== "host") {
+      setPhase("lobby");
+      return;
+    }
+    const next = playersRef.current
+      .filter((player) => player.connected)
+      .map((player) => ({
+        ...player,
+        alive: true,
+        spectating: false,
+        snapshot: undefined,
+      }));
+    manualTargetsRef.current.clear();
+    itemUsesRef.current.clear();
+    setSelectedTargetId("");
+    setInkUsed(0);
+    setAttackLogs([]);
+    setWinnerName("");
+    replacePlayers(next);
+    setPhase("lobby");
+    broadcast({
+      type: "lobby",
+      players: next,
+      rules: rulesRef.current,
+    });
+  };
+
   const startMatch = () => {
     if (roleRef.current !== "host" || playersRef.current.length < 2) return;
     const next = playersRef.current
@@ -2286,10 +2334,13 @@ function OnlineParty({
   };
 
   const activateInkItem = (targetId: string) => {
+    const activeLocalPlayer = playersRef.current.find(
+      (player) => player.id === localIdRef.current,
+    );
     if (
       !matchRules.itemsEnabled ||
       inkUsed >= matchRules.inkLimit ||
-      !localPlayer?.alive
+      !activeLocalPlayer?.alive
     ) {
       return;
     }
@@ -2300,6 +2351,11 @@ function OnlineParty({
       sendRealtimePacket({ type: "item-use", item: "ink", targetId });
     }
   };
+
+  useEffect(() => {
+    shortcutSelectTargetRef.current = selectTarget;
+    shortcutInkRef.current = activateInkItem;
+  });
 
   const finishLocalPlayer = (status: "won" | "lost") => {
     if (status !== "lost") return;
@@ -2407,6 +2463,56 @@ function OnlineParty({
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 6);
+
+  useEffect(() => {
+    if (phase !== "playing" || isSpectating) return;
+    const handleShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.matches(
+          "input, textarea, select, button, [contenteditable='true']",
+        ) ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.repeat
+      ) {
+        return;
+      }
+      const numberMatch = /^(?:Digit|Numpad)([1-7])$/.exec(event.code);
+      if (numberMatch) {
+        const opponent = remotePlayers[Number(numberMatch[1]) - 1];
+        if (opponent?.alive && opponent.connected) {
+          event.preventDefault();
+          shortcutSelectTargetRef.current(opponent.id);
+        }
+        return;
+      }
+      if (event.code !== "KeyI" || !matchRules.itemsEnabled) return;
+      const opponent =
+        remotePlayers.find(
+          (player) =>
+            player.id === selectedTargetId &&
+            player.alive &&
+            player.connected,
+        ) ??
+        remotePlayers.find((player) => player.alive && player.connected);
+      if (!opponent) return;
+      event.preventDefault();
+      if (opponent.id !== selectedTargetId) {
+        shortcutSelectTargetRef.current(opponent.id);
+      }
+      shortcutInkRef.current(opponent.id);
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [
+    isSpectating,
+    matchRules.itemsEnabled,
+    phase,
+    remotePlayers,
+    selectedTargetId,
+  ]);
 
   if (phase === "entry" || phase === "connecting") {
     if (inviteCode.length === 6 && !manualInviteJoin) {
@@ -2629,12 +2735,18 @@ function OnlineParty({
           onSend={sendChat}
         />
         <div className="result-actions">
-          {role === "host" ? (
+          {role === "host" && (
             <button className="start-online" onClick={startMatch}>
               REMATCH →
             </button>
-          ) : (
-            <div className="guest-waiting">호스트의 재시작을 기다리는 중…</div>
+          )}
+          <button className="return-lobby" onClick={returnToLobby}>
+            RETURN TO LOBBY
+          </button>
+          {role !== "host" && (
+            <div className="guest-waiting">
+              대기실에서 현재 접속 인원을 확인할 수 있습니다.
+            </div>
           )}
           <button className="leave-room" onClick={leaveRoom}>
             LEAVE ROOM
@@ -2670,16 +2782,46 @@ function OnlineParty({
       </div>
       <div className="mobile-opponent-strip" aria-label="상대 생존 목록">
         {remotePlayers.map((player) => (
-          <button
-            className={player.id === selectedTargetId ? "strip-selected" : ""}
-            disabled={!player.alive}
+          <article
+            className={`mobile-opponent-card ${
+              player.id === selectedTargetId ? "strip-selected" : ""
+            }`}
             key={player.id}
-            onClick={() => selectTarget(player.id)}
           >
-            <i className={player.alive && player.connected ? "alive" : ""} />
-            <span>{player.name}</span>
-            <em>{player.alive ? "LIVE" : "OUT"}</em>
-          </button>
+            <button
+              aria-label={`${player.name} 수동 타깃 선택`}
+              className="mobile-target-select"
+              disabled={
+                !player.alive ||
+                !player.connected ||
+                matchRules.targetMode !== "manual"
+              }
+              onClick={() => selectTarget(player.id)}
+            >
+              <i className={player.alive && player.connected ? "alive" : ""} />
+              <span>{player.name}</span>
+              <em>
+                {player.alive
+                  ? player.id === selectedTargetId
+                    ? "TARGET"
+                    : "LIVE"
+                  : "OUT"}
+              </em>
+            </button>
+            {matchRules.itemsEnabled && !isSpectating && (
+              <button
+                aria-label={`${player.name}에게 먹물 아이템 사용`}
+                className="mobile-ink-action"
+                disabled={
+                  !player.alive || !player.connected || inkRemaining <= 0
+                }
+                onClick={() => activateInkItem(player.id)}
+              >
+                INK
+                <small>×{inkRemaining}</small>
+              </button>
+            )}
+          </article>
         ))}
       </div>
       <div className="online-arena">
@@ -2712,19 +2854,23 @@ function OnlineParty({
           <div className="opponents-title">
             <span>OPPONENTS</span>
             <em>
-              {matchRules.targetMode.toUpperCase()} TARGET ·{" "}
-              {matchRules.itemsEnabled ? `INK ${inkRemaining}` : "ITEMS OFF"}
+              {matchRules.targetMode.toUpperCase()} · 1–7 TARGET
+              {matchRules.itemsEnabled
+                ? ` · I INK ×${inkRemaining}`
+                : " · ITEMS OFF"}
             </em>
           </div>
           <div className="opponents-grid">
-            {remotePlayers.map((player) => (
+            {remotePlayers.map((player, index) => (
               <RemoteBoard
                 player={player}
                 key={player.id}
+                hotkey={index + 1}
                 selected={player.id === selectedTargetId}
                 targeting={
                   !isSpectating &&
-                  matchRules.targetMode === "manual" &&
+                  (matchRules.targetMode === "manual" ||
+                    matchRules.itemsEnabled) &&
                   player.alive &&
                   player.connected
                 }

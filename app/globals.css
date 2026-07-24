@@ -1763,6 +1763,17 @@ button.online-choice:hover {
   white-space: nowrap;
 }
 
+.remote-player-head kbd {
+  background: var(--orange);
+  color: #090a0c;
+  display: inline-grid;
+  font: 900 9px/16px monospace;
+  height: 16px;
+  margin-right: 5px;
+  place-items: center;
+  width: 16px;
+}
+
 .target-hint {
   background: transparent;
   border: 0;
@@ -1928,13 +1939,27 @@ button.online-choice:hover {
 .result-actions {
   display: grid;
   gap: 10px;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 17px;
 }
 
 .result-actions .start-online,
 .result-actions .guest-waiting {
   margin: 0;
+}
+
+.result-actions .guest-waiting {
+  grid-column: 1 / -1;
+}
+
+.return-lobby {
+  background: #121b21;
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  cursor: pointer;
+  font: 800 11px monospace;
+  letter-spacing: 0.08em;
+  min-height: 44px;
 }
 
 .rules-backdrop {
@@ -2990,7 +3015,7 @@ footer {
   .screen-multiplayer-playing .game-rig {
     --cell: clamp(
       12px,
-      min(8.2vw, calc((100dvh - 326px - env(safe-area-inset-bottom)) / 20)),
+      min(8.2vw, calc((100dvh - 334px - env(safe-area-inset-bottom)) / 20)),
       28px
     );
   }
@@ -3011,20 +3036,60 @@ footer {
     scrollbar-width: none;
   }
 
-  .mobile-opponent-strip button {
-    align-items: center;
+  .mobile-opponent-card {
     background: #11151a;
     border: 1px solid #303741;
-    color: #aeb5be;
     display: grid;
     flex: 0 0 auto;
+    grid-template-columns: minmax(82px, 1fr) auto;
+    max-width: 172px;
+    min-height: 40px;
+    min-width: 112px;
+  }
+
+  .mobile-target-select {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    color: #aeb5be;
+    display: grid;
     font: 9px monospace;
     gap: 3px 6px;
     grid-template-columns: 6px minmax(54px, auto);
-    max-width: 130px;
-    min-height: 34px;
+    min-height: 38px;
+    min-width: 0;
     padding: 4px 7px;
     text-align: left;
+  }
+
+  .mobile-target-select:disabled {
+    cursor: default;
+    opacity: 1;
+  }
+
+  .mobile-ink-action {
+    align-items: center;
+    background: #24131a;
+    border: 0;
+    border-left: 1px solid #563342;
+    color: #ff9bbd;
+    display: flex;
+    flex-direction: column;
+    font: 800 9px/1 monospace;
+    justify-content: center;
+    min-height: 38px;
+    min-width: 46px;
+    padding: 4px 5px;
+  }
+
+  .mobile-ink-action small {
+    color: #fff;
+    font-size: 8px;
+    margin-top: 4px;
+  }
+
+  .mobile-ink-action:disabled {
+    opacity: 0.32;
   }
 
   .mobile-opponent-strip i {
@@ -3050,7 +3115,7 @@ footer {
     font: normal 8px monospace;
   }
 
-  .mobile-opponent-strip .strip-selected {
+  .mobile-opponent-card.strip-selected {
     border-color: var(--orange);
   }
 
